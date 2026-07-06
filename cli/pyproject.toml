@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "proofloop"
+version = "0.1.0"
+description = "Correctness gate for AI-written code: block unready deploys with proof, remember every failure."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "Proofloop" }]
+keywords = ["deploy", "gate", "ai", "correctness", "guardrail"]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+proofloop = "proofloop.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/proofloop"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

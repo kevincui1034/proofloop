@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+/* ————— Proofloop design tokens ————— */
+:root {
+  /* surfaces */
+  --bg: #0a0e14;
+  --bg-raised: #0e141d;
+  --bg-inset: #070b11;
+
+  /* type */
+  --ink: #edf1f7;
+  --body: #a9b4c4;
+  --faint: #7d8899;
+
+  /* structure */
+  --line: #1d2531;
+  --line-strong: #2b3544;
+
+  /* the judge / brand */
+  --amber: #f5b83d;
+  --amber-deep: #c98f1d;
+  --amber-soft: rgba(245, 184, 61, 0.12);
+
+  /* verdicts */
+  --verdict-red: #f2716a;
+  --verdict-red-deep: #e5484d;
+  --verdict-green: #4ade80;
+
+  /* vendor-neutral bots */
+  --bot-teal: #2dd4bf;
+  --bot-violet: #a78bfa;
+  --bot-rose: #fb7185;
+
+  /* receipt paper */
+  --paper: #f2edde;
+  --paper-ink: #262e3a;
+  --paper-faint: #6b7280;
+  --paper-red: #bf3630;
+  --paper-green: #1f7a42;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-raised: var(--bg-raised);
+  --color-inset: var(--bg-inset);
+  --color-ink: var(--ink);
+  --color-body: var(--body);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-amber: var(--amber);
+  --color-amber-deep: var(--amber-deep);
+  --color-verdict-red: var(--verdict-red);
+  --color-verdict-green: var(--verdict-green);
+  --color-bot-teal: var(--bot-teal);
+  --color-bot-violet: var(--bot-violet);
+  --color-bot-rose: var(--bot-rose);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  background: var(--bg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--body);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* pre-animation transform states (stamp scale, card slides) must never
+     widen the page; clip (not hidden) keeps position:sticky working */
+  overflow-x: clip;
+}
+
+::selection {
+  background: var(--amber);
+  color: #171006;
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+/* terminal cursor */
+@keyframes cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.cursor-blink {
+  animation: cursor-blink 1.06s steps(1) infinite;
+}
+
+/* scroll-hint chevron */
+@keyframes hint-drop {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.7;
+  }
+  50% {
+    transform: translateY(6px);
+    opacity: 1;
+  }
+}
+.hint-drop {
+  animation: hint-drop 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor-blink,
+  .hint-drop {
+    animation: none;
+  }
+}
