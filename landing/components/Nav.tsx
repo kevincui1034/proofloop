@@ -1,6 +1,6 @@
 "use client";
 
-export const GITHUB_URL = "https://github.com/kevincui1034/preprod-check";
+export const GITHUB_URL = "https://github.com/kevincui1034/proofloop";
 
 export function GitHubIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (

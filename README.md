@@ -52,11 +52,15 @@ prior diagnosis: `↩ Recalled from chk_001`.
 ## Quick start
 
 ```bash
-pip install -e cli
+# install (Python 3.11+)
+pip install "git+https://github.com/kevincui1034/proofloop.git#subdirectory=cli"
+
 cd your-project
 proofloop init                       # writes agent hooks; prints AGENTS.md snippet
 proofloop guard deploy -- vercel --prod
 ```
+
+`pipx install "git+https://github.com/kevincui1034/proofloop.git#subdirectory=cli"` works too (isolated). Or clone and `pip install -e cli` for local development.
 
 Runs fully offline. Set `OPENROUTER_API_KEY` to enable LLM-written diagnoses (deterministic explanations otherwise — pass/fail never depends on a model).
 

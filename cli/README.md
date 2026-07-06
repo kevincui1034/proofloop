@@ -18,7 +18,12 @@ record, and — on recurrence — an instant citation of the prior diagnosis
 ## Install
 
 ```bash
-pip install -e 'cli[dev]'        # from this repo
+# from GitHub (Python 3.11+)
+pip install "git+https://github.com/kevincui1034/proofloop.git#subdirectory=cli"
+
+# or, working in a clone:
+pip install -e 'cli[dev]'        # includes the test extras
+
 proofloop init                   # wire up .proofloop/, agent hooks, config
 ```
 
