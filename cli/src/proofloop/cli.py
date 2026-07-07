@@ -42,6 +42,20 @@ from .hooks import (
 )
 from .memory.store import MemoryStore
 from .session import now_iso, stamp
+from .taskloop import (
+    evaluate_task_run,
+    loop_exit_code,
+    run_codex_task_loop,
+    task_exit_code,
+)
+from .taskrun_memory import TASK_RUN_MEMORY_FILE, write_task_run_memory
+from .tasksetup import (
+    SetupResult,
+    detect_project_signals,
+    ensure_agents_guidance,
+    ensure_benchmark_adapter,
+    load_adapter,
+)
 
 try:  # typer >= 0.16 vendors click as typer._click
     from typer._click import exceptions as click_exceptions
@@ -64,6 +78,10 @@ advisory_app = typer.Typer(
     "approve held findings, reject wrong ones, confirm correct ones."
 )
 app.add_typer(advisory_app, name="advisory")
+task_app = typer.Typer(
+    help="Audit benchmark/task episodes for local-setup refusals and fake live runs."
+)
+app.add_typer(task_app, name="task")
 
 PASSTHROUGH = {"allow_extra_args": True, "ignore_unknown_options": True}
 RUN_KINDS = ("tests", "build", "lint", "typecheck")
@@ -236,6 +254,320 @@ def run(
         fg=typer.colors.GREEN if exit_code == 0 else typer.colors.RED,
     )
     raise typer.Exit(exit_code)
+
+
+# --------------------------------------------------------------------------
+# task judge
+# --------------------------------------------------------------------------
+
+
+def _ensure_task_environment(
+    root: Path,
+    benchmark: str,
+    *,
+    all_agents: bool = True,
+    refresh_adapter: bool = False,
+) -> SetupResult:
+    result = SetupResult()
+    (root / ".proofloop").mkdir(exist_ok=True)
+    signals = detect_project_signals(root)
+    result.signals = signals
+
+    toml_path = root / ".proofloop.toml"
+    if toml_path.exists():
+        result.existing.append(".proofloop.toml")
+    else:
+        toml_path.write_text(
+            _render_proofloop_toml(detect_extra_deploy_patterns(root)),
+            encoding="utf-8",
+        )
+        result.changed.append(".proofloop.toml")
+
+    for message in (
+        _merge_claude_hook(root),
+        _merge_cursor_hooks(root)
+        if all_agents or "cursor" in detect_installed_agents(root)
+        else "",
+        _merge_codex_hooks(root)
+        if all_agents or "codex" in detect_installed_agents(root)
+        else "",
+    ):
+        if not message:
+            continue
+        if "already" in message:
+            result.existing.append(message)
+        elif "skipped" in message:
+            result.warnings.append(message)
+        else:
+            result.changed.append(message)
+
+    changed, message = ensure_agents_guidance(root)
+    (result.changed if changed else result.existing).append(message)
+
+    adapter_changed, adapter_path = ensure_benchmark_adapter(
+        root, benchmark, signals, refresh=refresh_adapter
+    )
+    result.adapter_path = str(adapter_path.relative_to(root))
+    (result.changed if adapter_changed else result.existing).append(result.adapter_path)
+    return result
+
+
+@task_app.command("setup")
+def task_setup(
+    benchmark: str = typer.Option(
+        "bankertoolbench",
+        "--benchmark",
+        "-b",
+        help="Benchmark adapter name to create/update.",
+    ),
+    refresh_adapter: bool = typer.Option(
+        False,
+        "--refresh-adapter",
+        help="Rewrite an existing benchmark adapter from current repo signals.",
+    ),
+    all_agents: bool = typer.Option(
+        True,
+        "--all-agents/--detected-agents-only",
+        help="Wire all supported agent hooks, or only detected agents.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Print setup JSON."),
+) -> None:
+    """Search the repo and repair Proofloop/Codex task-loop setup."""
+    result = _ensure_task_environment(
+        Path.cwd(),
+        benchmark,
+        all_agents=all_agents,
+        refresh_adapter=refresh_adapter,
+    )
+    if json_out:
+        typer.echo(json.dumps(result.to_dict(), ensure_ascii=False))
+        return
+    for item in result.changed:
+        typer.secho(f"changed: {item}", fg=typer.colors.GREEN)
+    for item in result.existing:
+        typer.echo(f"existing: {item}")
+    for item in result.warnings:
+        typer.secho(f"warning: {item}", fg=typer.colors.YELLOW)
+    typer.echo(f"adapter: {result.adapter_path}")
+
+
+@task_app.command("judge", context_settings=PASSTHROUGH, cls=SentinelCommand)
+def task_judge(
+    ctx: typer.Context,
+    task: str = typer.Option(
+        None,
+        "--task",
+        help="Benchmark/user task under test; persisted in the assessment.",
+    ),
+    benchmark: str = typer.Option(
+        "bankertoolbench",
+        "--benchmark",
+        "-b",
+        help="Benchmark adapter name to repair before judging.",
+    ),
+    setup: bool = typer.Option(
+        True,
+        "--setup/--no-setup",
+        help="Repair Proofloop hooks, AGENTS.md, and benchmark adapter before judging.",
+    ),
+    refresh_adapter: bool = typer.Option(
+        False,
+        "--refresh-adapter",
+        help="Rewrite the benchmark adapter from current repo signals before judging.",
+    ),
+    transcript: Path = typer.Option(
+        None,
+        "--transcript",
+        help="Agent transcript/session trace to audit (JSONL or plain text).",
+    ),
+    proof: list[Path] = typer.Option(
+        [],
+        "--proof",
+        "-p",
+        help="Proof log/file/directory to scan for live UI/API evidence.",
+    ),
+    require_marker: list[str] = typer.Option(
+        [],
+        "--require-marker",
+        "-m",
+        help="Case-insensitive marker that must appear in transcript/proof/verify output.",
+    ),
+    no_require_live: bool = typer.Option(
+        False,
+        "--no-require-live",
+        help="Do not fail solely because no live UI/API evidence was supplied.",
+    ),
+    verify_timeout: int = typer.Option(
+        600,
+        "--verify-timeout",
+        min=1,
+        help="Seconds before the verifier command times out.",
+    ),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the task assessment JSON.",
+    ),
+) -> None:
+    """Audit an agent benchmark run and emit corrective feedback.
+
+    Optional verifier command goes after `--`:
+
+    proofloop task judge --transcript trace.jsonl -m "POST /api" -- npm run e2e
+    """
+    if ctx.args and not ctx.meta.get(_SENTINEL_KEY, True):
+        _require_sentinel(ctx, "proofloop task judge [options] -- <verify-cmd...>")
+    if setup:
+        _ensure_task_environment(
+            Path.cwd(),
+            benchmark,
+            refresh_adapter=refresh_adapter,
+        )
+    verify_cmd = _tail_cmd(ctx.args)
+    assessment = evaluate_task_run(
+        Path.cwd(),
+        task=task,
+        transcript_path=transcript,
+        proof_paths=proof,
+        verify_cmd=verify_cmd,
+        required_markers=require_marker,
+        require_live=not no_require_live,
+        verify_timeout_seconds=verify_timeout,
+        env=dict(os.environ),
+    )
+
+    if json_out:
+        typer.echo(json.dumps(assessment.to_dict(), ensure_ascii=False))
+    elif assessment.passed:
+        typer.secho(
+            f"proofloop: task judge passed ({assessment.id}) -> "
+            f"{assessment.assessment_path}",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        typer.secho(
+            f"proofloop: task judge blocked ({assessment.id}) -> "
+            f"{assessment.feedback_path}",
+            fg=typer.colors.RED,
+        )
+        for issue in assessment.issues:
+            typer.echo(f"- {issue.code}: {issue.evidence}")
+        typer.echo("Give the feedback file to the agent, then rerun the live verification.")
+    raise typer.Exit(task_exit_code(assessment))
+
+
+@task_app.command("loop", context_settings=PASSTHROUGH, cls=SentinelCommand)
+def task_loop(
+    ctx: typer.Context,
+    task: str = typer.Option(
+        ...,
+        "--task",
+        help="Benchmark/user task to run through Codex until Proofloop verdict.",
+    ),
+    benchmark: str = typer.Option(
+        "bankertoolbench",
+        "--benchmark",
+        "-b",
+        help="Benchmark adapter name.",
+    ),
+    max_iterations: int = typer.Option(
+        3,
+        "--max-iterations",
+        min=1,
+        help="Maximum Codex/judge repair iterations.",
+    ),
+    require_marker: list[str] = typer.Option(
+        [],
+        "--require-marker",
+        "-m",
+        help="Live evidence marker that must appear before pass.",
+    ),
+    codex_command: str = typer.Option(
+        None,
+        "--codex-command",
+        help='Codex command prefix; default: "codex exec --json".',
+    ),
+    refresh_adapter: bool = typer.Option(
+        False,
+        "--refresh-adapter",
+        help="Refresh adapter before running the loop.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Print loop JSON."),
+) -> None:
+    """Set up, run Codex, judge traces, and repeat until a task verdict."""
+    if ctx.args and not ctx.meta.get(_SENTINEL_KEY, True):
+        _require_sentinel(ctx, "proofloop task loop --task ... -- <verify-cmd...>")
+    root = Path.cwd()
+    setup = _ensure_task_environment(root, benchmark, refresh_adapter=refresh_adapter)
+    adapter_path = root / (setup.adapter_path or "")
+    adapter = load_adapter(adapter_path)
+    verify_cmd = _tail_cmd(ctx.args)
+    if not verify_cmd:
+        verify_commands = adapter.get("verify_commands") or []
+        if verify_commands and isinstance(verify_commands[0], list):
+            verify_cmd = [str(part) for part in verify_commands[0]]
+    result = run_codex_task_loop(
+        root,
+        task=task,
+        benchmark=benchmark,
+        adapter_path=adapter_path if adapter_path.is_file() else None,
+        verify_cmd=verify_cmd,
+        required_markers=require_marker,
+        codex_cmd=codex_command,
+        max_iterations=max_iterations,
+        env=dict(os.environ),
+    )
+    if json_out:
+        typer.echo(json.dumps(result.to_dict(), ensure_ascii=False))
+    elif result.passed:
+        typer.secho(
+            f"proofloop: task loop passed ({result.id}) -> {result.changelog_path}",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        typer.secho(
+            f"proofloop: task loop blocked after {len(result.iterations)} iteration(s) "
+            f"({result.id}) -> {result.changelog_path}",
+            fg=typer.colors.RED,
+        )
+    raise typer.Exit(loop_exit_code(result))
+
+
+@task_app.command("export-memory")
+def task_export_memory(
+    output: Path = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="JSONL output path; default: .proofloop/task-run-memory.jsonl.",
+    ),
+    include_loops: bool = typer.Option(
+        True,
+        "--include-loops/--assessments-only",
+        help="Include loop-level records as well as task assessment rows.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Print result JSON."),
+) -> None:
+    """Export task-loop outcomes as additive training records."""
+    root = Path.cwd()
+    rows = write_task_run_memory(root, output, include_loops=include_loops)
+    output_path = output or (root / ".proofloop" / TASK_RUN_MEMORY_FILE)
+    if json_out:
+        typer.echo(
+            json.dumps(
+                {
+                    "rows": rows,
+                    "output": str(output_path),
+                    "include_loops": include_loops,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return
+    typer.secho(
+        f"proofloop: exported {rows} task-run memory row(s) -> {output_path}",
+        fg=typer.colors.GREEN,
+    )
 
 
 # --------------------------------------------------------------------------
