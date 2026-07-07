@@ -111,6 +111,72 @@ def render_blocked(
         )
 
 
+#: How each delivery state reads to the human at the terminal.
+_DELIVERY_LABELS = {
+    "injected": "sent to agent",
+    "held": "held — awaiting your approval",
+    "staged": "approved — delivers next event",
+    "sent": "delivered",
+    "suppressed": "below noise floor (recorded only)",
+}
+
+
+def render_advisories(
+    console: Console,
+    record: "MemoryRecord",
+    agent_notes: list[str] | None = None,
+) -> None:
+    """The advisory section — model judgment, explicitly NOT the gate.
+
+    The human sees every finding regardless of its delivery tier; held
+    findings carry the approve/reject commands inline. Prints nothing
+    when there are no advisories and no drained notes.
+    """
+    advisories = record.advisories
+    drained = [
+        note
+        for note in (agent_notes or [])
+        if not any(a.get("id", "") in note for a in advisories)
+    ]
+    if not advisories and not drained:
+        return
+    body = Text()
+    for entry in advisories:
+        state = _DELIVERY_LABELS.get(entry.get("delivery"), entry.get("delivery"))
+        body.append(f"{entry['id']} ", style="bold")
+        body.append(
+            f"[{entry['kind']} · tier {entry['tier']} · "
+            f"confidence {entry['confidence']:.2f} · {state}]\n",
+            style="dim",
+        )
+        line = f"  {entry['concern']}"
+        if entry.get("target"):
+            line += f" ({entry['target']})"
+        body.append(line + "\n")
+        if entry.get("grounded_in"):
+            body.append(
+                f"  grounded in: {', '.join(entry['grounded_in'])}\n", style="dim"
+            )
+        if entry.get("delivery") == "held":
+            body.append(
+                f"  › proofloop advisory approve {entry['id']} · "
+                f"proofloop advisory reject {entry['id']}\n",
+                style="cyan",
+            )
+    for note in drained:
+        body.append(f"{note}\n", style="yellow")
+    console.print(
+        Panel(
+            body,
+            title="⚠ Advisory — model judgment, not blocking",
+            subtitle="never affects the gate decision or exit code",
+            border_style="magenta",
+            box=box.ROUNDED,
+            padding=(0, 2),
+        )
+    )
+
+
 def render_allowed(
     console: Console,
     record: "MemoryRecord",

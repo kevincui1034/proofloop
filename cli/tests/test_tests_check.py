@@ -91,3 +91,20 @@ def test_run_rejects_unknown_kind(tmp_repo, monkeypatch):
     monkeypatch.chdir(tmp_repo.root)
     result = runner.invoke(app, ["run", "bogus", "--", "echo", "hi"])
     assert result.exit_code == 64  # EX_USAGE — 2 is reserved for BLOCKED
+
+
+def test_run_maps_signal_exit_codes(tmp_repo, monkeypatch):
+    """A signal-killed child stamps and exits 128+N (shell convention),
+    never the raw negative returncode."""
+    monkeypatch.chdir(tmp_repo.root)
+    result = runner.invoke(
+        app,
+        [
+            "run", "tests", "--",
+            sys.executable, "-c",
+            "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
+        ],
+    )
+    assert result.exit_code == 143  # 128 + SIGTERM(15)
+    session = load_session(tmp_repo.root)
+    assert session["tests"]["exit_code"] == 143

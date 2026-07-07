@@ -39,6 +39,11 @@ EXPECTED_KEYS = {
     "inputs_hash",
     "env_fingerprint",
     "resolves",
+    # additive: advisory surface
+    "advisories",
+    "advisory_input",
+    "advisory_output",
+    "task_ref",
 }
 
 
@@ -51,6 +56,40 @@ def test_check_entry_keys_pinned(record_factory):
     record = record_factory()
     for check in record.to_dict()["checks"]:
         assert set(check.keys()) == set(CHECK_ENTRY_KEYS)
+
+
+def test_advisory_fields_default_empty_and_roundtrip(tmp_path, record_factory):
+    """Old records (no advisory keys) parse; new records default empty."""
+    record = record_factory()
+    data = record.to_dict()
+    assert data["advisories"] == []
+    assert data["advisory_input"] == ""
+    assert data["advisory_output"] == ""
+    assert data["task_ref"] is None
+    # a pre-advisory record (missing keys entirely) still parses
+    legacy = {k: v for k, v in data.items() if not k.startswith("advisor") and k != "task_ref"}
+    parsed = MemoryRecord.from_dict(legacy)
+    assert parsed.advisories == []
+    assert parsed.task_ref is None
+    # advisories roundtrip through the store
+    entry = {
+        "id": "chk_001#0",
+        "concern": "no retry on the webhook POST",
+        "kind": "discovery",
+        "tier": 4,
+        "confidence": 0.8,
+        "grounded_in": [],
+        "target": "notifications.py:12",
+        "judge_model_id": "mock/advisory",
+        "delivery": "held",
+        "label": None,
+        "retraction": None,
+    }
+    store = MemoryStore(tmp_path / ".proofloop")
+    store.append(record_factory("chk_009", advisories=[entry], task_ref="add retries"))
+    loaded = store.get("chk_009")
+    assert loaded.advisories == [entry]
+    assert loaded.task_ref == "add retries"
 
 
 def test_roundtrip_append_get_iter(tmp_path, record_factory):
@@ -346,3 +385,135 @@ def test_memory_list_and_show(tmp_repo, record_factory, monkeypatch):
     assert json.loads(shown.stdout)["id"] == "chk_001"
     missing = runner.invoke(app, ["memory", "show", "chk_404"])
     assert missing.exit_code == 1
+
+
+# -- D2: Windows-safe locking -------------------------------------------------
+
+
+def test_store_importable_without_fcntl(monkeypatch):
+    """The module must import on platforms without fcntl (Windows)."""
+    import importlib
+    import types
+
+    import proofloop.memory.store as store_mod
+
+    fake_msvcrt = types.ModuleType("msvcrt")
+    fake_msvcrt.LK_LOCK = 0
+    fake_msvcrt.LK_UNLCK = 1
+    fake_msvcrt.locking = lambda *a: None
+    monkeypatch.setitem(sys.modules, "fcntl", None)  # forces ImportError
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    try:
+        importlib.reload(store_mod)
+        assert store_mod.fcntl is None
+        assert store_mod.msvcrt is fake_msvcrt
+    finally:
+        monkeypatch.undo()
+        importlib.reload(store_mod)  # restore the POSIX state for other tests
+    assert store_mod.fcntl is not None
+
+
+def test_windows_lock_fallback_serializes(monkeypatch):
+    """msvcrt path: seek(0) before lock AND unlock, retry on OSError,
+    LK_UNLCK on the same 1-byte range."""
+    import types
+
+    import proofloop.memory.store as store_mod
+
+    events: list[tuple] = []
+
+    class FakeFH:
+        def seek(self, pos):
+            events.append(("seek", pos))
+
+        def fileno(self):
+            return 42
+
+    attempts = {"n": 0}
+
+    def fake_locking(fd, mode, nbytes):
+        events.append(("locking", fd, mode, nbytes))
+        if mode == 100 and attempts["n"] == 0:  # first LK_LOCK fails
+            attempts["n"] += 1
+            raise OSError("lock violation")
+
+    fake_msvcrt = types.ModuleType("msvcrt")
+    fake_msvcrt.LK_LOCK = 100
+    fake_msvcrt.LK_UNLCK = 200
+    fake_msvcrt.locking = fake_locking
+    monkeypatch.setattr(store_mod, "fcntl", None)
+    monkeypatch.setattr(store_mod, "msvcrt", fake_msvcrt, raising=False)
+    monkeypatch.setattr(store_mod.time, "sleep", lambda s: None)
+
+    fh = FakeFH()
+    store_mod._lock_file(fh)
+    store_mod._unlock_file(fh)
+
+    assert events == [
+        ("seek", 0),                # seek(0) before lock
+        ("locking", 42, 100, 1),    # LK_LOCK attempt 1 — raises
+        ("locking", 42, 100, 1),    # retried until acquired
+        ("seek", 0),                # seek(0) before unlock
+        ("locking", 42, 200, 1),    # LK_UNLCK on the same 1-byte range
+    ]
+
+
+# -- D3: resolution merge preserves history -----------------------------------
+
+
+def test_resolution_merge_preserves_history(tmp_path, record_factory):
+    store = MemoryStore(tmp_path / ".proofloop")
+    store.append(record_factory("chk_001"))
+    store.update_resolution(
+        "chk_001", {"status": "accepted", "note": None, "at": "t1"}
+    )
+    first = store.get("chk_001").resolution
+    assert first["status"] == "accepted"
+    assert "history" not in first  # no prior — looks exactly like today
+
+    store.update_resolution(
+        "chk_001", {"status": "confirmed", "outcome": "shipped", "at": "t2"}
+    )
+    merged = store.get("chk_001").resolution
+    assert merged["status"] == "confirmed"
+    assert merged["outcome"] == "shipped"
+    assert merged["history"] == [{"status": "accepted", "note": None, "at": "t1"}]
+
+    # A third update keeps history flat and chronological (oldest first),
+    # each entry stripped of its own history key.
+    store.update_resolution(
+        "chk_001", {"status": "confirmed", "outcome": "rolled_back", "at": "t3"}
+    )
+    final = store.get("chk_001").resolution
+    assert [h["at"] for h in final["history"]] == ["t1", "t2"]
+    assert all("history" not in h for h in final["history"])
+
+
+def test_confirm_does_not_clobber_auto_resolved(tmp_repo, record_factory, monkeypatch):
+    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store.append(record_factory("chk_001"))
+    store.update_resolution(
+        "chk_001", {"status": "auto_resolved", "resolved_by": "chk_002", "at": "t1"}
+    )
+    monkeypatch.chdir(tmp_repo.root)
+    result = runner.invoke(app, ["confirm", "chk_001", "--outcome", "shipped"])
+    assert result.exit_code == 0
+    resolution = store.get("chk_001").resolution
+    assert resolution["status"] == "confirmed"
+    assert resolution["outcome"] == "shipped"
+    assert resolution["history"][0]["status"] == "auto_resolved"
+    assert resolution["history"][0]["resolved_by"] == "chk_002"
+
+
+def test_resolve_then_confirm_cli_roundtrip(tmp_repo, record_factory, monkeypatch):
+    """Acceptance: resolve → confirm keeps the accepted label in history."""
+    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store.append(record_factory("chk_001"))
+    monkeypatch.chdir(tmp_repo.root)
+    assert runner.invoke(app, ["resolve", "chk_001", "--status", "accepted"]).exit_code == 0
+    assert runner.invoke(app, ["confirm", "chk_001", "--outcome", "shipped"]).exit_code == 0
+    shown = runner.invoke(app, ["memory", "show", "chk_001"])
+    data = json.loads(shown.stdout)
+    assert data["resolution"]["status"] == "confirmed"
+    assert data["resolution"]["outcome"] == "shipped"
+    assert data["resolution"]["history"][0]["status"] == "accepted"

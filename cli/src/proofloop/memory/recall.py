@@ -27,6 +27,83 @@ ANCHOR_RE = re.compile(r"[A-Za-z0-9_./-]+:\d+")
 ENV_TOKEN_WEIGHT = 5
 ANCHOR_TOKEN_WEIGHT = 1
 
+# Only false_positive is excluded: it marks a block the human judged WRONG.
+# overridden / auto_resolved / accepted / confirmed stay recallable — those
+# were correct blocks (a --force'd failure is still a true failure, and
+# "you forced past this before" is exactly the story recall exists to tell).
+EXCLUDED_RESOLUTIONS = frozenset({"false_positive"})
+
+#: A class needs at least this many false_positive labels — and more of
+#: them than accepted labels — before it is treated as noisy. One stray
+#: label never flips recall behavior.
+NOISY_MIN_FALSE_POSITIVES = 2
+
+
+def class_reliability(store: MemoryStore, repo_id: str | None = None) -> dict[str, dict]:
+    """Per-failure-class label counts: which classes' blocks the human
+    accepted vs judged false positives.
+
+    Only the two explicit block-correctness labels count — ``accepted``
+    and ``false_positive``. ``auto_resolved``/``overridden``/``confirmed``
+    are outcomes, not verdicts on whether the block was right. Reads the
+    CURRENT top-level resolution status only, never ``history``.
+    ``repo_id=None`` aggregates the whole store (used by memory stats).
+    """
+    counts: dict[str, dict] = {}
+    for record in store.iter_records():
+        if repo_id is not None and record.repo_id != repo_id:
+            continue
+        if record.gate_passed:
+            continue
+        status = (record.resolution or {}).get("status")
+        if status not in ("accepted", "false_positive"):
+            continue
+        for cls in record.failure_classes():
+            slot = counts.setdefault(cls, {"accepted": 0, "false_positive": 0})
+            slot[status] += 1
+    for slot in counts.values():
+        slot["noisy"] = (
+            slot["false_positive"] >= NOISY_MIN_FALSE_POSITIVES
+            and slot["false_positive"] > slot["accepted"]
+        )
+    return counts
+
+
+# --------------------------------------------------------------------------
+# Advisory suppression — the advisory analog of EXCLUDED_RESOLUTIONS.
+# A human `proofloop advisory reject` permanently excludes that finding's
+# signature from grounding and re-firing, the way false_positive labels
+# keep wrong blocks out of recall.
+# --------------------------------------------------------------------------
+
+_ADVISORY_TOKEN_RE = re.compile(r"[a-z0-9_]{4,}")
+
+
+def advisory_signature(concern: str, target: str | None) -> str:
+    """Stable signature for advisory recurrence: the target file (line
+    numbers shift) + the salient concern tokens, order-insensitive so a
+    reworded restatement of the same concern still matches."""
+    file_part = (target or "").split(":", 1)[0].strip().lower()
+    tokens = sorted(set(_ADVISORY_TOKEN_RE.findall((concern or "").lower())))
+    return file_part + "|" + " ".join(tokens)
+
+
+def rejected_advisory_signatures(store: MemoryStore, repo_id: str) -> dict[str, str]:
+    """``{signature: concern}`` for every human-rejected advisory in the
+    repo. The gate drops re-fired findings matching these and lists the
+    concerns in the prompt as do-not-re-raise."""
+    out: dict[str, str] = {}
+    for record in store.iter_records():
+        if record.repo_id != repo_id:
+            continue
+        for entry in record.advisories:
+            if entry.get("label") == "rejected":
+                signature = advisory_signature(
+                    str(entry.get("concern", "")), entry.get("target")
+                )
+                out[signature] = str(entry.get("concern", ""))
+    return out
+
 
 def _tokens(text: str) -> set[str]:
     """Evidence tokens: env-var-shaped names + file:line anchors ONLY."""
@@ -78,14 +155,29 @@ def recall(
     if not classes:
         return []
     current_tokens = _failure_tokens(failures)
-    scored: list[tuple[int, str, str, MemoryRecord]] = []
+    # Label-informed weighting: a prior whose overlapping classes are ALL
+    # noisy (false_positive labels outnumber accepted — see
+    # class_reliability) sorts below every prior with a trusted overlap.
+    # Demoted, never excluded. With zero labels every class is trusted and
+    # ordering is identical to the unweighted behavior.
+    reliability = class_reliability(store, repo_id)
+    scored: list[tuple[int, int, str, str, MemoryRecord]] = []
     for record in store.iter_records():
         if record.repo_id != repo_id or record.gate_passed:
             continue
-        if not (classes & record.failure_classes()):
+        # The gate consumes priors ONLY through recall(), so this filter
+        # also keeps false positives out of recalled_from, strong_match
+        # short-circuiting, and the judge's cited priors.
+        if ((record.resolution or {}).get("status")) in EXCLUDED_RESOLUTIONS:
             continue
+        overlap = classes & record.failure_classes()
+        if not overlap:
+            continue
+        trusted = 0 if all(
+            reliability.get(cls, {}).get("noisy") for cls in overlap
+        ) else 1
         scored.append(
-            (score_match(current_tokens, record), record.created_at, record.id, record)
+            (trusted, score_match(current_tokens, record), record.created_at, record.id, record)
         )
-    scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    scored.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
     return [record for *_ignore, record in scored]

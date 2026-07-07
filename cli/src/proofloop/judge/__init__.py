@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Mapping
 
 from .. import config
+from .advisory import (  # noqa: F401
+    AdvisoryFinding,
+    AdvisoryInput,
+    AdvisoryJudge,
+    AdvisoryOutput,
+    get_advisory_judge,
+)
 from .anthropic_direct import AnthropicJudge  # noqa: F401
 from .base import Judge, JudgeInput, JudgeOutput  # noqa: F401
 from .deterministic import DeterministicJudge  # noqa: F401

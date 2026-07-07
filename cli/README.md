@@ -47,12 +47,15 @@ proofloop guard deploy -- ./deploy.sh
 
 | Command | What it does |
 | --- | --- |
-| `proofloop guard <action> -- <cmd...>` | Run readiness checks; exec `<cmd>` only if they pass. `--force` (logged), `--no-exec`, `--json`. |
+| `proofloop guard <action> -- <cmd...>` | Run readiness checks; exec `<cmd>` only if they pass. `--force` (logged), `--no-exec`, `--json`, `--env-file` (evaluate env checks against the deploy target's env file instead of your shell). |
 | `proofloop run <kind> -- <cmd...>` | Run tests/build/lint/typecheck and stamp a worktree-bound session marker. |
 | `proofloop resolve <id> --status accepted\|false_positive` | Label whether a block was correct. |
 | `proofloop confirm <id> --outcome shipped\|rolled_back` | Post-deploy ground truth. |
+| `proofloop advisory approve\|reject\|confirm <id#i>` | Review an advisory finding (e.g. `chk_012#0`): approve a held one for delivery, reject a wrong one (it never re-fires; a delivered one is retracted on the next event), confirm a correct one. |
 | `proofloop login` / `logout` | Store / remove an LLM API key for judge explanations (BYOK). |
 | `proofloop memory list` / `show <id>` | Inspect the memory. |
+| `proofloop memory export` | Emit the records as training-ready JSONL (each row gets a computed `label`). `--labeled-only`, `--failure-class X`, `--dedupe`, `-o PATH`. |
+| `proofloop memory stats` | Dataset health metrics + judge spend from the cost ledger. `--json`. |
 | `proofloop init` | Create `.proofloop/`, write the Claude Code PreToolUse hook, `.proofloop.toml`, print the AGENTS.md snippet. |
 
 ### Exit codes
@@ -73,6 +76,9 @@ proofloop guard deploy -- ./deploy.sh
 | lint/typecheck ran & passed | `preprod_check_skipped` |
 | no hardcoded secrets (patterns + entropy) | `hardcoded_secret` |
 | config sanity (localhost, debug, test keys) | `config_mismatch` |
+| schema changed without a migration (Prisma/Django; others via config) | `pending_migration` |
+| manifest changed without its lockfile | `lockfile_drift` |
+| TODO/FIXME/NotImplementedError in newly added lines | `unfinished_work` |
 
 See [TAXONOMY.md](TAXONOMY.md) for the open failure-class spec.
 
@@ -116,6 +122,63 @@ provider (auto-detected in that order); `PROOFLOOP_JUDGE_PROVIDER` names one
 explicitly; `PROOFLOOP_JUDGE_MODEL` overrides the model; `PROOFLOOP_NO_LLM=1`
 forces offline.
 
+### The advisory judge (optional — model judgment, never blocking)
+
+With an LLM configured, the gate also runs one **advisory** review of the
+change at the deploy boundary: risks the deterministic checklist structurally
+can't enumerate (missing error handling around an external call, a change
+that doesn't match what the agent was asked to do) plus notes on existing
+deterministic failures ("likely a false positive — the same shape was labeled
+`false_positive` in `chk_042`"). Findings are grounded in the repo's memory
+of past outcomes and each records the prior ids it cited (`grounded_in`).
+
+Two surfaces, one authority: **advisory findings never change the decision.**
+The exit code is identical with zero findings or ten; offline the record is
+byte-identical to today. The judge is skipped for trivial diffs and when the
+same inputs were already reviewed (`inputs_hash`), and any error or timeout
+yields zero findings.
+
+Delivery is confidence-gated: a finding at or above
+`auto_inject_min_confidence` (default 0.7) reaches the coding agent this
+event as non-blocking context (Claude Code `additionalContext` — no
+permission decision is ever attached; on a blocked run it rides along in the
+deny reason). Between `hold_min_confidence` (default 0.4) and that, it is
+**held**: you see it in the terminal with an `approve`/`reject` command and
+the agent only sees it after `proofloop advisory approve chk_012#0` (it goes
+out on the next deploy event). Below the floor it is recorded only. You see
+every finding either way.
+
+`proofloop advisory reject chk_012#0` does three things: labels the finding
+(training signal), permanently stops that finding's signature from re-firing
+or grounding future reviews, and — if the agent already saw it — sends a
+retraction note on the next deploy event. What an agent already read cannot
+be unread; the suppression is immediate, the retraction lands one event
+later.
+
+`proofloop advisory confirm` is the graduation path: a signature confirmed
+three times shows up in `memory stats` as a **candidate deterministic
+check** — the model discovers the class, a human writes the `file:line`
+check, and enforcement moves back to the provable core. New failure classes
+stay deterministic, never model judgment (see TAXONOMY.md).
+
+Tier-5 findings ("not what was asked") need the task: it's captured
+opportunistically from the agent transcript by the hook, or via
+`proofloop guard deploy --task "..."`, `PROOFLOOP_TASK`, or
+`[session].task` in `.proofloop.toml`. Without one they simply don't fire.
+
+Tune or disable in `.proofloop.toml`:
+
+```toml
+[advisory]
+# enabled = true
+# auto_inject_min_confidence = 0.7
+# hold_min_confidence = 0.4
+# max_findings = 5
+# diff_min_lines = 1
+# tiers = [4, 5]        # [4] mutes tier-5 findings
+# model = ""            # blank → the judge's resolved model
+```
+
 ## Memory — the dataset is the product
 
 Every run (pass or fail) appends one training-ready record to
@@ -128,15 +191,67 @@ proof files, run logs); shorter values are not scrubbed — they collide with
 ordinary text. Ambient non-credential vars (`PWD`, `HOME`, `PATH`, `LC_*`,
 etc.) are exempt so paths stay readable in proof records.
 
+Labels feed straight back into recall: a record you mark
+`--status false_positive` is never recalled again — it stops showing up in
+`recalled_from` and stops short-circuiting the judge on recurrences. Every
+other label (`accepted`, `overridden`, `auto_resolved`, `confirmed:*`) stays
+recallable, because those were correct blocks and "this exact failure was
+seen before" is the point of the memory.
+
+Labels also weight recall at the class level: a failure class whose
+`false_positive` labels outnumber its `accepted` ones (with at least two)
+is treated as noisy, and its priors sort below trusted-class priors —
+demoted, never excluded. `accepted` labels rehabilitate a class. The
+per-class counts behind this are visible in `memory stats` under
+`class_reliability`.
+
+Two read-only views over the dataset:
+
+```bash
+proofloop memory export --labeled-only --dedupe > dataset.jsonl
+proofloop memory stats --json
+```
+
+`export` emits one JSON row per record with a computed `label`
+(`unlabeled`, `accepted`, `false_positive`, `overridden`, `auto_resolved`,
+`confirmed:shipped`, `confirmed:rolled_back`); `--dedupe` keeps the last
+record per `inputs_hash`. `stats` reports block/pass counts, failure-class
+and label distributions, recall hit rate, auto-resolve rate, gate latency,
+and judge spend aggregated from `.proofloop/ledger.jsonl`. Both work fully
+offline and never modify the store.
+
 ## Agent integration
 
-`proofloop init` installs a Claude Code `PreToolUse` hook that intercepts
-deploy-shaped shell commands. A failing gate answers with a **deny** whose
-reason contains the failed checks, evidence, and exact fix steps — so the
-agent self-corrects. Everything else (non-deploy commands, passing gates) gets
-**no decision**, leaving Claude Code's normal permission flow untouched — the
+`proofloop init` installs pre-execution hooks that intercept deploy-shaped
+shell commands. A failing gate answers with a **deny** whose reason contains
+the failed checks, evidence, and exact fix steps — so the agent
+self-corrects. Everything else (non-deploy commands, passing gates) gets
+**no decision**, leaving the agent's normal permission flow untouched — the
 hook never auto-approves. For all agents, add the snippet from
 [AGENTS.md](AGENTS.md) to your repo.
+
+### Hook wiring per agent
+
+| Agent | Hook | Wired by init |
+| --- | --- | --- |
+| Claude Code | `PreToolUse` (matcher `Bash`) | `.claude/settings.json` — always |
+| Cursor | `beforeShellExecution` | `.cursor/hooks.json` — when Cursor is detected (or `--all-agents`) |
+| OpenAI Codex CLI | `PreToolUse` (matcher `Bash`) | `.codex/hooks.json` — when Codex is detected (or `--all-agents`) |
+
+All three run `proofloop hook` (Cursor/Codex with `--agent cursor|codex`, so
+records carry the right `agent_source`). Existing hook entries are merged,
+never clobbered, and re-running `init` is idempotent.
+
+Caveats worth knowing:
+
+- **Codex trust:** project-local hooks are inert until you trust the folder —
+  run `codex` once and accept the prompt. Codex's streaming exec path can
+  bypass hooks, so keep the AGENTS.md snippet for full Codex coverage.
+- **Cursor + virtualenvs:** GUI-launched Cursor doesn't inherit a
+  shell-activated venv PATH. Install proofloop user-wide (`pipx install
+  proofloop`) or put the absolute path in `.cursor/hooks.json`.
+- **Cursor exit semantics:** exit 2 blocks; other non-zero exits fail open —
+  proofloop's internal-error path therefore denies with exit 2.
 
 ### What counts as a "deploy"
 
@@ -165,6 +280,30 @@ deploy_patterns_extra = ['(?:^|[;&|])\s*bin/release\b']
 (`fly.toml`, `wrangler.toml`, `Dockerfile`, `serverless.yml`, `*.tf`, …) to
 print what it found, and seeds `deploy_patterns_extra` from `package.json`
 deploy scripts the defaults might miss (e.g. `deploy:prod`).
+
+### Merges and releases
+
+The gate also intercepts two more moments, each with its own patterns
+(`release_patterns[_extra]`, `merge_patterns[_extra]` — same convention as
+deploy) and its own check profile in `.proofloop.toml [actions]`:
+
+- **Releases** (`npm publish`, `cargo publish`, `twine upload`,
+  `gh release create`, `git push --tags` / `git push origin v1.2.3`) are
+  gated **by default** — publishing a package is a production-affecting
+  moment. Turn off with `[hook] gate_releases = false`. Releases run every
+  check, like deploys.
+- **Merges** (`git merge <ref>`, `gh pr merge`; never `--abort`/`--continue`)
+  are **opt-in** via `[hook] gate_merges = true` — out of the box this would
+  block routine merges for anyone not stamping runs. The merge profile
+  evaluates code-readiness only (`tests`, `build`, `preprod`); env, secrets,
+  and config are deploy-target concerns. Override with
+  `[actions.merge] checks = [...]`.
+
+A command matching two groups gates as the strictest story
+(deploy > release > merge). Memory recall is action-agnostic: a failure
+first diagnosed at deploy time is recalled when the same failure blocks a
+release or merge — same repo, same failure class, same fix. You can also
+invoke any action directly: `proofloop guard release -- npm publish`.
 
 ## License
 

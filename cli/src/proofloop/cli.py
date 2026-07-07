@@ -28,13 +28,16 @@ from typer.core import TyperCommand
 from . import __version__
 from .agent_detect import detect_installed_agents
 from .config import clear_judge_config, config_path, save_judge_config
+from .envfile import parse_env_file
 from .gate import EXIT_INTERNAL_ERROR, run_gate, scrub_text
 from .hooks import (
     AGENTS_SNIPPET,
     PROOFLOOP_TOML_TEMPLATE,
+    cursor_deny_output,
     deny_output,
     detect_deploy_stack,
     detect_extra_deploy_patterns,
+    handle_cursor_hook,
     handle_hook,
 )
 from .memory.store import MemoryStore
@@ -56,6 +59,11 @@ app = typer.Typer(
 )
 memory_app = typer.Typer(help="Inspect proofloop memory records.")
 app.add_typer(memory_app, name="memory")
+advisory_app = typer.Typer(
+    help="Review advisory findings (model judgment, never blocking): "
+    "approve held findings, reject wrong ones, confirm correct ones."
+)
+app.add_typer(advisory_app, name="advisory")
 
 PASSTHROUGH = {"allow_extra_args": True, "ignore_unknown_options": True}
 RUN_KINDS = ("tests", "build", "lint", "typecheck")
@@ -125,12 +133,30 @@ def guard(
     json_out: bool = typer.Option(
         False, "--json", help="Print the full memory record JSON instead of panels."
     ),
+    env_file: Path = typer.Option(
+        None,
+        "--env-file",
+        help="Evaluate the env_vars check against this env file (the deploy "
+        "target's environment) instead of the current shell.",
+    ),
+    task: str = typer.Option(
+        None,
+        "--task",
+        help="What the change was supposed to do (enables tier-5 advisory "
+        "findings; also via PROOFLOOP_TASK or [session].task).",
+    ),
 ) -> None:
     """Gate a command: proofloop guard deploy -- <cmd...>"""
     _require_sentinel(ctx, "proofloop guard <action> -- <cmd...>")
     cmd = _tail_cmd(ctx.args)
     if not cmd and not no_exec:
         _usage_error("no command given — usage: proofloop guard <action> -- <cmd...>")
+    deploy_env = None
+    if env_file is not None:
+        try:
+            deploy_env = parse_env_file(env_file)
+        except OSError as exc:
+            _usage_error(f"cannot read --env-file {env_file}: {exc}")
     try:
         result = run_gate(
             Path.cwd(),
@@ -140,6 +166,8 @@ def guard(
             no_exec=no_exec,
             json_output=json_out,
             env=dict(os.environ),
+            deploy_env=deploy_env,
+            task_ref=task,
         )
     except Exception as exc:  # internal error must never silently allow
         typer.secho(
@@ -195,6 +223,11 @@ def run(
             # Persisted output is scrubbed; the live tee stays raw.
             log.write(scrub_text(line, os.environ))
     exit_code = proc.wait()
+    # A signal-killed child reports a negative returncode; map to the
+    # shell convention 128 + signal BEFORE stamping so the session
+    # marker and the CLI exit code both record e.g. 143, never -15.
+    if exit_code < 0:
+        exit_code = 128 - exit_code
 
     stamp(root, kind, exit_code, [scrub_text(part, os.environ) for part in cmd])
     rel_log = log_path.relative_to(root)
@@ -243,6 +276,83 @@ def confirm(
     if not ok:
         _fail(f"record {record_id} not found", 1)
     typer.echo(f"{record_id} confirmed: {outcome}")
+
+
+# --------------------------------------------------------------------------
+# advisory — approve / reject / confirm one finding (chk_NNN#i)
+# --------------------------------------------------------------------------
+
+
+def _parse_advisory_ref(ref: str) -> tuple[str, int]:
+    record_id, sep, index = ref.partition("#")
+    if not sep or not index.isdigit() or not record_id:
+        _usage_error(
+            f"advisory ids look like chk_012#0 (record id '#' finding index), got {ref!r}"
+        )
+    return record_id, int(index)
+
+
+def _get_advisory(store: MemoryStore, record_id: str, index: int) -> dict:
+    record = store.get(record_id)
+    if record is None:
+        _fail(f"record {record_id} not found", 1)
+    if index >= len(record.advisories):
+        _fail(
+            f"{record_id} has {len(record.advisories)} advisory finding(s) — "
+            f"no #{index}",
+            1,
+        )
+    return record.advisories[index]
+
+
+@advisory_app.command("approve")
+def advisory_approve(ref: str = typer.Argument(..., metavar="ID", help="e.g. chk_012#0")) -> None:
+    """Approve a HELD finding — delivered to the agent on the next deploy event."""
+    record_id, index = _parse_advisory_ref(ref)
+    store = _store()
+    entry = _get_advisory(store, record_id, index)
+    if entry.get("delivery") != "held":
+        _fail(
+            f"advisory {ref} is not held (delivery: {entry.get('delivery')}) — "
+            "only held findings await approval",
+            1,
+        )
+    store.label_advisory(record_id, index, delivery="staged")
+    typer.echo(f"{ref} approved — will reach the agent on the next deploy event")
+
+
+@advisory_app.command("reject")
+def advisory_reject(ref: str = typer.Argument(..., metavar="ID", help="e.g. chk_012#0")) -> None:
+    """Reject a finding: labels it, stops it re-firing, retracts if delivered.
+
+    Three effects: (1) a rejected label on the record (training signal);
+    (2) the finding's signature never re-fires or grounds future findings;
+    (3) if the agent already saw it, a retraction note goes out on the next
+    deploy event. What the agent already read cannot be unread — effects
+    1–2 are immediate and permanent, effect 3 lands on the next event.
+    """
+    record_id, index = _parse_advisory_ref(ref)
+    store = _store()
+    entry = _get_advisory(store, record_id, index)
+    delivered = entry.get("delivery") in ("injected", "sent")
+    store.label_advisory(
+        record_id, index, label="rejected", retraction="staged" if delivered else None
+    )
+    message = f"{ref} rejected — this finding will not re-fire"
+    if delivered:
+        message += "; a retraction note goes to the agent on the next deploy event"
+    typer.echo(message)
+
+
+@advisory_app.command("confirm")
+def advisory_confirm(ref: str = typer.Argument(..., metavar="ID", help="e.g. chk_012#0")) -> None:
+    """Label a finding correct — repeat confirmations surface it in
+    `proofloop memory stats` as a candidate deterministic check."""
+    record_id, index = _parse_advisory_ref(ref)
+    store = _store()
+    _get_advisory(store, record_id, index)
+    store.label_advisory(record_id, index, label="confirmed")
+    typer.echo(f"{ref} confirmed")
 
 
 # --------------------------------------------------------------------------
@@ -403,6 +513,116 @@ def memory_show(record_id: str = typer.Argument(..., metavar="ID")) -> None:
     typer.echo(json.dumps(record.to_dict(), indent=2, ensure_ascii=False))
 
 
+@memory_app.command("export")
+def memory_export(
+    labeled_only: bool = typer.Option(
+        False, "--labeled-only", help="Only rows with a resolution label."
+    ),
+    failure_class: str = typer.Option(
+        None, "--failure-class", help="Only records with this failure class."
+    ),
+    dedupe: bool = typer.Option(
+        False, "--dedupe", help="Keep only the last record per inputs_hash."
+    ),
+    output: Path = typer.Option(
+        None, "-o", "--output", help="Write JSONL here instead of stdout."
+    ),
+) -> None:
+    """Export training-ready JSONL (each record plus a computed `label`)."""
+    from .memory.export import export_rows
+
+    rows = list(
+        export_rows(
+            _store(),
+            labeled_only=labeled_only,
+            failure_class=failure_class,
+            dedupe=dedupe,
+        )
+    )
+    if not rows:
+        # stdout stays pipeline-safe (empty); the friendly note goes to stderr.
+        sys.stderr.write("proofloop: no matching memory records to export\n")
+        return
+    # Plain writes only — Rich would wrap long lines and corrupt JSONL.
+    if output is not None:
+        with output.open("w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        sys.stderr.write(f"proofloop: wrote {len(rows)} row(s) → {output}\n")
+    else:
+        for row in rows:
+            sys.stdout.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+@memory_app.command("stats")
+def memory_stats(
+    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Dataset health metrics + judge cost-ledger aggregation."""
+    from .memory.export import stats
+
+    store = _store()
+    data = stats(store, store.root / "ledger.jsonl")
+    if json_out:
+        sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
+        return
+    console = Console()
+    if data["records"] == 0:
+        console.print("[dim]no records yet — run `proofloop guard <action> -- <cmd>`[/dim]")
+        return
+    table = Table(title="proofloop memory stats", box=box.SIMPLE_HEAD)
+    table.add_column("metric", style="bold")
+    table.add_column("value")
+    table.add_row("records", str(data["records"]))
+    table.add_row("blocked / passed", f"{data['blocked']} / {data['passed']}")
+    table.add_row(
+        "failure classes",
+        ", ".join(f"{k}={v}" for k, v in sorted(data["failure_classes"].items())) or "—",
+    )
+    table.add_row(
+        "labels",
+        ", ".join(f"{k}={v}" for k, v in sorted(data["labels"].items())) or "—",
+    )
+    table.add_row("recall hit rate", f"{data['recall_hit_rate']:.0%}")
+    table.add_row("auto-resolve rate", f"{data['auto_resolve_rate']:.0%}")
+    table.add_row(
+        "gate duration",
+        f"mean {data['gate_duration_ms']['mean']:.0f} ms · "
+        f"p95 {data['gate_duration_ms']['p95']} ms",
+    )
+    table.add_row(
+        "agents",
+        ", ".join(f"{k}={v}" for k, v in sorted(data["agents"].items())) or "—",
+    )
+    advisories = data["advisories"]
+    if advisories["total"]:
+        table.add_row(
+            "advisories",
+            f"{advisories['total']} finding(s) · "
+            + ", ".join(f"{k}={v}" for k, v in sorted(advisories["by_delivery"].items()))
+            + " · labels: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(advisories["by_label"].items())),
+        )
+    ledger = data["ledger"]
+    table.add_row(
+        "judge spend",
+        f"${ledger['total_cost_usd']:.4f} over {ledger['calls']} call(s)",
+    )
+    console.print(table)
+    candidates = advisories["graduation_candidates"]
+    if candidates:
+        console.print(
+            "\n[bold]Candidate deterministic checks[/bold] — advisory findings "
+            "confirmed repeatedly; write the file:line check and enforcement "
+            "moves to the deterministic core:"
+        )
+        for candidate in candidates:
+            console.print(
+                f"  ×{candidate['confirmed']} confirmed [{candidate['kind']}]: "
+                f"{candidate['concern']} ({', '.join(candidate['ids'])})"
+            )
+
+
 # --------------------------------------------------------------------------
 # init
 # --------------------------------------------------------------------------
@@ -440,30 +660,125 @@ def _merge_claude_hook(root: Path) -> str:
     return f"wrote PreToolUse hook → {settings_path}"
 
 
+def _merge_codex_hooks(root: Path) -> str:
+    """Write the PreToolUse hook into .codex/hooks.json (merge, don't clobber).
+
+    Codex's hooks engine mirrors Claude Code's shape (same event, matcher
+    and payload). Never write config.toml — tomllib is read-only and a
+    rewrite would clobber user comments/format; hooks.json only.
+    """
+    hooks_dir = root / ".codex"
+    hooks_path = hooks_dir / "hooks.json"
+    data: dict = {}
+    if hooks_path.is_file():
+        try:
+            data = json.loads(hooks_path.read_text() or "{}")
+        except json.JSONDecodeError:
+            return f"skipped {hooks_path} (existing file is not valid JSON — not clobbering)"
+    hooks = data.setdefault("hooks", {})
+    pre = hooks.setdefault("PreToolUse", [])
+    already = any(
+        "proofloop hook" in hook.get("command", "")
+        for entry in pre
+        if isinstance(entry, dict)
+        for hook in entry.get("hooks", [])
+        if isinstance(hook, dict)
+    )
+    if already:
+        return f"{hooks_path} already wired (proofloop hook present)"
+    pre.append(
+        {
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": "proofloop hook --agent codex"}],
+        }
+    )
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(data, indent=2) + "\n")
+    return f"wrote PreToolUse hook → {hooks_path}"
+
+
+def _merge_cursor_hooks(root: Path) -> str:
+    """Write the beforeShellExecution hook into .cursor/hooks.json.
+
+    Cursor hooks have NO per-hook matcher — every shell command fires the
+    hook; deploy matching stays in Python where .proofloop.toml's
+    deploy_patterns_extra applies. Entry shape is flat: {"command": ...}.
+    """
+    hooks_dir = root / ".cursor"
+    hooks_path = hooks_dir / "hooks.json"
+    data: dict = {}
+    if hooks_path.is_file():
+        try:
+            data = json.loads(hooks_path.read_text() or "{}")
+        except json.JSONDecodeError:
+            return f"skipped {hooks_path} (existing file is not valid JSON — not clobbering)"
+    data.setdefault("version", 1)
+    hooks = data.setdefault("hooks", {})
+    before = hooks.setdefault("beforeShellExecution", [])
+    already = any(
+        isinstance(entry, dict) and "proofloop hook" in entry.get("command", "")
+        for entry in before
+    )
+    if already:
+        return f"{hooks_path} already wired (proofloop hook present)"
+    before.append({"command": "proofloop hook --agent cursor"})
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(data, indent=2) + "\n")
+    return f"wrote beforeShellExecution hook → {hooks_path}"
+
+
+def _venv_path_warning() -> str | None:
+    """Warn when the proofloop on PATH lives inside a virtualenv.
+
+    GUI-launched agents (Cursor especially) don't inherit a shell-activated
+    venv PATH, so the hook command would silently not resolve.
+    """
+    import shutil
+
+    resolved = shutil.which("proofloop")
+    in_venv = sys.prefix != sys.base_prefix
+    if resolved and ("/.venv/" in resolved or "/venv/" in resolved or in_venv):
+        return (
+            "proofloop resolves inside a virtualenv — GUI-launched agents may "
+            "not inherit that PATH. Install it user-wide (pipx install "
+            "proofloop) or put the absolute path in the hook files."
+        )
+    return None
+
+
 def _render_proofloop_toml(extra_patterns: list[str]) -> str:
     """Base template plus an active ``deploy_patterns_extra`` block when
     ``proofloop init`` detected repo-local deploy entrypoints.
 
-    Patterns are written as TOML single-quoted literals (no escaping needed
-    for regex backslashes); the appended key lands under ``[hook]``, the
-    template's last section. A pattern containing a single quote can't sit in
-    a literal string, so it's skipped rather than mis-quoted.
+    Patterns without a single quote are written as TOML single-quoted
+    literals (no escaping needed for regex backslashes); the appended key
+    lands under ``[hook]``, the template's last section. A pattern
+    containing a single quote can't sit in a literal string (TOML has no
+    escaping inside ``'...'``), so it's emitted as a basic string with
+    JSON escaping — valid TOML for these inputs.
     """
-    usable = [p for p in extra_patterns if "'" not in p]
-    if not usable:
+    if not extra_patterns:
         return PROOFLOOP_TOML_TEMPLATE
     block = [
         "",
         "# Auto-detected repo-local deploy entrypoints (safe to edit):",
         "deploy_patterns_extra = [",
     ]
-    block += [f"  '{p}'," for p in usable]
+    for p in extra_patterns:
+        if "'" in p:
+            block.append(f"  {json.dumps(p)},")
+        else:
+            block.append(f"  '{p}',")
     block.append("]")
     return PROOFLOOP_TOML_TEMPLATE + "\n".join(block) + "\n"
 
 
 @app.command()
-def init() -> None:
+def init(
+    all_agents: bool = typer.Option(
+        False, "--all-agents", help="Wire hooks for all supported agents, detected or not."
+    ),
+) -> None:
     """Set up proofloop in this repo: .proofloop/, agent hooks, config."""
     root = Path.cwd()
     console = Console(highlight=False)
@@ -508,6 +823,19 @@ def init() -> None:
             console.print(f"✓ wrote {toml_path.name} template")
 
     console.print(f"✓ {_merge_claude_hook(root)}")
+    if all_agents or "cursor" in agents:
+        console.print(f"✓ {_merge_cursor_hooks(root)}")
+    if all_agents or "codex" in agents:
+        console.print(f"✓ {_merge_codex_hooks(root)}")
+        console.print(
+            "  › Codex loads project hooks only after you trust this folder — "
+            "run `codex` once and accept the prompt. Codex's streaming exec "
+            "path can bypass hooks, so the AGENTS.md snippet below is still "
+            "required for full Codex coverage."
+        )
+    warning = _venv_path_warning()
+    if warning and (all_agents or "cursor" in agents or "codex" in agents):
+        console.print(f"  › warning: {warning}", style="yellow")
 
     console.print(
         "\nAdd this to your AGENTS.md / CLAUDE.md so every agent routes deploys "
@@ -522,23 +850,50 @@ def init() -> None:
 
 
 @app.command(hidden=True)
-def hook() -> None:
-    """Read a PreToolUse JSON event from stdin; emit deny JSON or no decision."""
+def hook(
+    agent: str = typer.Option(
+        "claude", "--agent", help="claude | codex | cursor (payload/output schema)."
+    ),
+) -> None:
+    """Read a hook JSON event from stdin; emit deny JSON or no decision.
+
+    Bare `proofloop hook` stays byte-compatible with existing Claude Code
+    settings.json files (default agent: claude).
+    """
+    agent = (agent or "claude").strip().lower()
+    if agent not in ("claude", "codex", "cursor"):
+        _usage_error("--agent must be one of: claude, codex, cursor")
     raw = sys.stdin.read()
+    internal_error_reason = (
+        "Proofloop hit an internal error while gating this command and "
+        "fails closed: {exc}. Run `proofloop guard deploy --no-exec` "
+        "for details. Fix these, then re-run the original command."
+    )
+
+    if agent == "cursor":
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+            output = handle_cursor_hook(payload, Path.cwd(), dict(os.environ))
+        except Exception as exc:  # fail CLOSED — and it must be exit 2:
+            # Cursor blocks on exit 2 but FAILS OPEN on any other non-zero,
+            # so an uncaught traceback (exit 1) would allow a deploy while
+            # the gate is broken.
+            sys.stderr.write(f"proofloop hook internal error — failing closed: {exc}\n")
+            print(json.dumps(cursor_deny_output(internal_error_reason.format(exc=exc))))
+            raise typer.Exit(2)
+        print(json.dumps(output))
+        return
+
     try:
         payload = json.loads(raw) if raw.strip() else {}
-        output = handle_hook(payload, Path.cwd(), dict(os.environ))
+        env = dict(os.environ)
+        if agent == "codex":
+            # setdefault: never clobber a user-exported PROOFLOOP_AGENT_SOURCE.
+            env.setdefault("PROOFLOOP_AGENT_SOURCE", "codex")
+        output = handle_hook(payload, Path.cwd(), env)
     except Exception as exc:  # fail CLOSED — never silently allow
         sys.stderr.write(f"proofloop hook internal error — failing closed: {exc}\n")
-        print(
-            json.dumps(
-                deny_output(
-                    "Proofloop hit an internal error while gating this command and "
-                    f"fails closed: {exc}. Run `proofloop guard deploy --no-exec` "
-                    "for details. Fix these, then re-run the original command."
-                )
-            )
-        )
+        print(json.dumps(deny_output(internal_error_reason.format(exc=exc))))
         raise typer.Exit(2)
     print(json.dumps(output))
 

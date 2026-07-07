@@ -19,7 +19,11 @@ DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 
 class OpenRouterJudge(ChatCompletionsJudge):
+    """``PROOFLOOP_OPENROUTER_URL`` overrides the endpoint — the hook for a
+    self-hosted proxy (e.g. LiteLLM) or a local test server."""
+
     endpoint = OPENROUTER_URL
+    endpoint_env = "PROOFLOOP_OPENROUTER_URL"
     default_model = DEFAULT_MODEL
 
     def _body_extras(self) -> dict:

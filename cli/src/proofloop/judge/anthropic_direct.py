@@ -59,34 +59,45 @@ class AnthropicJudge:
         self.transport = transport  # MockTransport injection point for tests
         self.root = Path(root) if root else None  # .proofloop dir for the ledger
 
+    def _chat(self, system: str, user: str) -> tuple[str, str, float]:
+        """One Messages-API round-trip → ``(content, model_id, cost)``.
+
+        Shared by ``diagnose`` and the advisory judge mixin; exceptions
+        propagate — each caller owns its own fallback behavior.
+        """
+        payload = {
+            "model": self.model,
+            "max_tokens": MAX_TOKENS,
+            "system": system,  # top-level field, not a message
+            "messages": [
+                {"role": "user", "content": user},
+            ],
+        }
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        }
+        with httpx.Client(transport=self.transport, timeout=TIMEOUT_SECONDS) as client:
+            response = client.post(ANTHROPIC_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        content = self._first_text(data.get("content") or [])
+        usage = data.get("usage") or {}
+        cost = token_cost(
+            PRICE.get(self.model),
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+        )
+        model_id = data.get("model") or self.model
+        append_ledger(self.root, model_id, cost)
+        return content, model_id, cost
+
     def diagnose(self, judge_input: JudgeInput) -> JudgeOutput:
         try:
-            payload = {
-                "model": self.model,
-                "max_tokens": MAX_TOKENS,
-                "system": SYSTEM_PROMPT,  # top-level field, not a message
-                "messages": [
-                    {"role": "user", "content": judge_input.to_prompt_text()},
-                ],
-            }
-            headers = {
-                "x-api-key": self.api_key,
-                "anthropic-version": ANTHROPIC_VERSION,
-                "content-type": "application/json",
-            }
-            with httpx.Client(transport=self.transport, timeout=TIMEOUT_SECONDS) as client:
-                response = client.post(ANTHROPIC_URL, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-            content = self._first_text(data.get("content") or [])
-            usage = data.get("usage") or {}
-            cost = token_cost(
-                PRICE.get(self.model),
-                usage.get("input_tokens", 0),
-                usage.get("output_tokens", 0),
+            content, model_id, cost = self._chat(
+                SYSTEM_PROMPT, judge_input.to_prompt_text()
             )
-            model_id = data.get("model") or self.model
-            append_ledger(self.root, model_id, cost)
             diagnosis, fix_steps = parse_content(content, judge_input)
             return JudgeOutput(
                 diagnosis=diagnosis,

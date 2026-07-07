@@ -16,6 +16,7 @@ from ..memory.schema import MemoryRecord
 MODEL_ID = "deterministic/proofloop-v1"
 
 #: Worst first: crashes and known-broken code outrank hygiene.
+#: Additions append (never reorder existing entries — order is pinned).
 SEVERITY_ORDER = [
     "missing_env_var",
     "test_failure",
@@ -24,6 +25,9 @@ SEVERITY_ORDER = [
     "tests_not_run",
     "config_mismatch",
     "preprod_check_skipped",
+    "pending_migration",
+    "lockfile_drift",
+    "unfinished_work",
 ]
 
 _ENV_NAME_RE = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\b")
@@ -65,6 +69,21 @@ def _sentence(result: CheckResult) -> str:
     if cls == "preprod_check_skipped":
         bits = "; ".join(e.detail for e in result.evidence) or "lint/typecheck skipped"
         return f"Pre-production checks were skipped ({bits})."
+    if cls == "pending_migration":
+        return (
+            f"A schema change has no accompanying migration ({_locs(result)}) — "
+            "the new code would run against the old schema."
+        )
+    if cls == "lockfile_drift":
+        return (
+            f"A dependency manifest changed without its lockfile ({_locs(result)}) — "
+            "the deploy would install stale dependencies."
+        )
+    if cls == "unfinished_work":
+        return (
+            f"The change adds unfinished-work markers ({_locs(result)}) — "
+            "TODO/FIXME/NotImplementedError lines are about to ship."
+        )
     return f"{result.name} failed: {result.evidence_str()}."
 
 

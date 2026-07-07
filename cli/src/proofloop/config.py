@@ -175,3 +175,46 @@ def resolve_judge(
 def llm_configured(env: Mapping[str, str] | None = None) -> bool:
     """True iff an LLM judge would be selected (discoverability hint)."""
     return resolve_judge(env) is not None
+
+
+#: Defaults for the repo-level ``.proofloop.toml [advisory]`` table. The
+#: advisory judge is best-effort and never blocks, so it defaults ON —
+#: it only actually runs when an LLM is configured (BYOK) anyway.
+ADVISORY_DEFAULTS = {
+    "enabled": True,
+    "auto_inject_min_confidence": 0.7,  # ≥ → injected to the agent
+    "hold_min_confidence": 0.4,         # ≥ → held for human approval
+    "max_findings": 5,
+    "diff_min_lines": 1,                # diff smaller than this → skip
+    "tiers": [4, 5],                    # mute a whole tier with e.g. [4]
+    "model": None,                      # None → the judge's resolved model
+}
+
+
+def advisory_settings(repo_config: dict | None) -> dict:
+    """The ``[advisory]`` table from ``.proofloop.toml`` merged over
+    ``ADVISORY_DEFAULTS``. Malformed values fall back to the default for
+    that key — a config typo must never crash the gate.
+    """
+    settings = dict(ADVISORY_DEFAULTS)
+    table = (repo_config or {}).get("advisory")
+    if not isinstance(table, dict):
+        return settings
+    if isinstance(table.get("enabled"), bool):
+        settings["enabled"] = table["enabled"]
+    for key in ("auto_inject_min_confidence", "hold_min_confidence"):
+        value = table.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            settings[key] = min(1.0, max(0.0, float(value)))
+    for key in ("max_findings", "diff_min_lines"):
+        value = table.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            settings[key] = value
+    tiers = table.get("tiers")
+    if isinstance(tiers, list):
+        valid = [t for t in tiers if isinstance(t, int) and t in (4, 5)]
+        settings["tiers"] = valid
+    model = table.get("model")
+    if isinstance(model, str) and model.strip():
+        settings["model"] = model.strip()
+    return settings

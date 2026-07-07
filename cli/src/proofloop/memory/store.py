@@ -3,24 +3,58 @@
 Local files, no DB. append() fsyncs (records are the asset); resolution
 updates rewrite the JSONL atomically (tempfile + os.replace). All
 writers — id allocation, append, resolution rewrite — serialize on an
-exclusive flock over ``.proofloop/lock`` so concurrent gates never mint
-duplicate ids or clobber each other's records.
+exclusive lock over ``.proofloop/lock`` (flock on POSIX, msvcrt
+byte-range lock on Windows) so concurrent gates never mint duplicate
+ids or clobber each other's records.
 """
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
+
 from .schema import MemoryRecord
 
 _ID_RE = re.compile(r"chk_(\d+)$")
+
+
+def _lock_file(fh) -> None:
+    """Exclusive-lock an open file, blocking until acquired."""
+    if fcntl is not None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        return
+    # msvcrt.locking locks a byte range starting at the CURRENT file
+    # position (the lock file is opened append-ish, sitting at EOF), so
+    # seek(0) first. LK_LOCK is not infinite-blocking like flock — it
+    # retries ~10x1s then raises OSError — so retry until acquired:
+    # writers must always serialize, never fail.
+    fh.seek(0)
+    while True:
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+            break
+        except OSError:
+            time.sleep(0.1)
+
+
+def _unlock_file(fh) -> None:
+    if fcntl is not None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        return
+    fh.seek(0)  # unlock the same 1-byte range the lock claimed
+    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 class MemoryStore:
@@ -35,14 +69,17 @@ class MemoryStore:
 
     @contextmanager
     def _exclusive_lock(self):
-        """Serialize writers across processes (flock on .proofloop/lock)."""
+        """Serialize writers across processes (lock on .proofloop/lock).
+
+        POSIX: flock. Windows: msvcrt byte-range lock (see _lock_file).
+        """
         self.root.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("a+") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            _lock_file(fh)
             try:
                 yield
             finally:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                _unlock_file(fh)
 
     # -- ids ---------------------------------------------------------------
 
@@ -162,8 +199,73 @@ class MemoryStore:
 
     # -- update ------------------------------------------------------------
 
+    def label_advisory(
+        self,
+        record_id: str,
+        index: int,
+        label: str | None = None,
+        delivery: str | None = None,
+        retraction: str | None = None,
+    ) -> bool:
+        """Update one advisory entry's lifecycle fields via atomic rewrite.
+
+        Only the fields given (non-None) are set — label, delivery and
+        retraction advance independently (e.g. a drain marks delivery
+        "sent" without touching the label). Same lock/tempfile path as
+        ``update_resolution``, so concurrent appends are never dropped.
+        """
+        if not self.jsonl_path.is_file():
+            return False
+        with self._exclusive_lock():
+            found = False
+            out_lines: list[str] = []
+            with self.jsonl_path.open(encoding="utf-8") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        data = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        out_lines.append(stripped)
+                        continue
+                    if data.get("id") == record_id:
+                        advisories = data.get("advisories") or []
+                        if 0 <= index < len(advisories) and isinstance(
+                            advisories[index], dict
+                        ):
+                            entry = advisories[index]
+                            if label is not None:
+                                entry["label"] = label
+                            if delivery is not None:
+                                entry["delivery"] = delivery
+                            if retraction is not None:
+                                entry["retraction"] = retraction
+                            found = True
+                    out_lines.append(json.dumps(data, ensure_ascii=False))
+            if not found:
+                return False
+            fd, tmp = tempfile.mkstemp(dir=self.root, prefix=".memory-")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(out_lines) + "\n")
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmp, self.jsonl_path)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+            return True
+
     def update_resolution(self, record_id: str, resolution: dict) -> bool:
         """Set ``resolution`` on one record via atomic rewrite.
+
+        A prior resolution is never clobbered: it is pushed onto
+        ``resolution["history"]`` — a flat, chronological (oldest-first)
+        list of prior resolution dicts, each stripped of its own
+        ``history`` key. Top-level ``status`` is always the current
+        status; there is no ``history`` key at all when there was no
+        prior resolution.
 
         The read → rewrite → replace happens under the same lock append()
         takes, so a concurrently appended record can never be dropped by
@@ -185,7 +287,12 @@ class MemoryStore:
                         out_lines.append(stripped)
                         continue
                     if data.get("id") == record_id:
-                        data["resolution"] = resolution
+                        prev = data.get("resolution")
+                        new_res = dict(resolution)
+                        if isinstance(prev, dict):
+                            prev_history = prev.pop("history", [])
+                            new_res["history"] = [*prev_history, prev]
+                        data["resolution"] = new_res
                         found = True
                     out_lines.append(json.dumps(data, ensure_ascii=False))
             if not found:

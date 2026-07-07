@@ -15,6 +15,7 @@ behavior without inheriting the chat/completions request path.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,7 +100,10 @@ class ChatCompletionsJudge:
     """
 
     #: Subclasses set these plus (optionally) override the three hooks below.
+    #: ``endpoint_env`` names an env var that overrides ``endpoint`` at
+    #: construction time (self-hosted proxy / LiteLLM / test servers).
     endpoint: str = ""
+    endpoint_env: str = ""
     default_model: str = ""
 
     def __init__(
@@ -115,6 +119,9 @@ class ChatCompletionsJudge:
         self.fallback = fallback or DeterministicJudge()
         self.transport = transport  # MockTransport injection point for tests
         self.root = Path(root) if root else None  # .proofloop dir for the ledger
+        if self.endpoint_env:
+            # Instance attribute shadows the class default; unset env → default.
+            self.endpoint = os.environ.get(self.endpoint_env) or type(self).endpoint
 
     # -- subclass hooks --------------------------------------------------
     def _auth_headers(self) -> dict[str, str]:
@@ -127,25 +134,36 @@ class ChatCompletionsJudge:
         return 0.0
 
     # -- shared request path ---------------------------------------------
+    def _chat(self, system: str, user: str) -> tuple[str, str, float]:
+        """One chat/completions round-trip → ``(content, model_id, cost)``.
+
+        Shared by ``diagnose`` and the advisory judge mixin; exceptions
+        propagate — each caller owns its own fallback behavior.
+        """
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            **self._body_extras(),
+        }
+        headers = {"Content-Type": "application/json", **self._auth_headers()}
+        with httpx.Client(transport=self.transport, timeout=TIMEOUT_SECONDS) as client:
+            response = client.post(self.endpoint, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        cost = self._extract_cost(data)
+        model_id = data.get("model") or self.model
+        append_ledger(self.root, model_id, cost)
+        return content, model_id, cost
+
     def diagnose(self, judge_input: JudgeInput) -> JudgeOutput:
         try:
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": judge_input.to_prompt_text()},
-                ],
-                **self._body_extras(),
-            }
-            headers = {"Content-Type": "application/json", **self._auth_headers()}
-            with httpx.Client(transport=self.transport, timeout=TIMEOUT_SECONDS) as client:
-                response = client.post(self.endpoint, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            cost = self._extract_cost(data)
-            model_id = data.get("model") or self.model
-            append_ledger(self.root, model_id, cost)
+            content, model_id, cost = self._chat(
+                SYSTEM_PROMPT, judge_input.to_prompt_text()
+            )
             diagnosis, fix_steps = parse_content(content, judge_input)
             return JudgeOutput(
                 diagnosis=diagnosis,

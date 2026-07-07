@@ -428,3 +428,15 @@ def test_factory_no_llm_flag_beats_stored_config(tmp_path):
     env = {"XDG_CONFIG_HOME": str(tmp_path / "cfg"), "PROOFLOOP_NO_LLM": "1"}
     config.save_judge_config("anthropic", "k", env=env)
     assert isinstance(get_judge(env), DeterministicJudge)
+
+
+def test_openrouter_endpoint_env_override(monkeypatch):
+    from proofloop.judge.openrouter import OPENROUTER_URL
+
+    monkeypatch.setenv("PROOFLOOP_OPENROUTER_URL", "http://127.0.0.1:9999/chat/completions")
+    judge = OpenRouterJudge(api_key="k")
+    assert judge.endpoint == "http://127.0.0.1:9999/chat/completions"
+
+    monkeypatch.delenv("PROOFLOOP_OPENROUTER_URL")
+    judge = OpenRouterJudge(api_key="k")
+    assert judge.endpoint == OPENROUTER_URL  # unset env → class default

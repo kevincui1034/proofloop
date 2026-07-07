@@ -387,3 +387,148 @@ def test_hook_cli_denies_deploy_in_failing_repo(tmp_repo, monkeypatch):
     output = json.loads(result.stdout.strip().splitlines()[-1])
     assert _decision(output) == "deny"
     assert _reason(output).endswith(FINAL_INSTRUCTION)
+
+
+def test_hook_persists_exact_command_string(tmp_repo, scrubbed_env):
+    """D4: cmd is persisted as a single-element list holding the exact
+    shell text — never mangled by whitespace splitting."""
+    tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
+    command = 'vercel deploy && echo "it\'s done"'
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+    output = handle_hook(payload, tmp_repo.root, scrubbed_env)
+    assert _decision(output) == "deny"
+    context = json.loads(
+        (tmp_repo.root / ".proofloop" / "runs" / "chk_001" / "context.json").read_text()
+    )
+    assert context["cmd"] == [command]
+
+
+# -- Cursor adapter (beforeShellExecution — flat payload schema) --------------
+
+
+def test_cursor_hook_non_deploy_no_decision(tmp_repo, scrubbed_env):
+    from proofloop.hooks import handle_cursor_hook
+
+    payload = {"command": "ls -la", "cwd": str(tmp_repo.root)}
+    assert handle_cursor_hook(payload, tmp_repo.root, scrubbed_env) == NO_DECISION
+    assert not (tmp_repo.root / ".proofloop" / "memory.jsonl").exists()
+
+
+def test_cursor_hook_deny_maps_schema(tmp_repo, scrubbed_env):
+    from proofloop.hooks import handle_cursor_hook
+
+    tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
+    payload = {"command": "vercel deploy", "cwd": str(tmp_repo.root)}
+    output = handle_cursor_hook(payload, tmp_repo.root, scrubbed_env)
+    # Exact snake_case keys per the Cursor hooks doc — wrong casing fails silently.
+    assert set(output) == {"permission", "agent_message", "user_message"}
+    assert output["permission"] == "deny"
+    assert "missing_env_var" in output["agent_message"]
+    assert "Fix steps:" in output["agent_message"]
+    assert output["agent_message"].endswith(FINAL_INSTRUCTION)
+    # agent_source lands as cursor on the record
+    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    assert record.agent_source == "cursor"
+
+
+def test_cursor_hook_pass_emits_empty(tmp_repo, scrubbed_env):
+    from proofloop.hooks import handle_cursor_hook
+
+    tmp_repo.write("svc.py", "x = 1\n")
+    stamp(tmp_repo.root, "tests", 0, ["pytest"])
+    payload = {"command": "./deploy.sh"}
+    assert handle_cursor_hook(payload, tmp_repo.root, scrubbed_env) == NO_DECISION
+    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    assert record is not None and record.gate_passed
+
+
+def test_cursor_hook_does_not_clobber_agent_source_env(tmp_repo, scrubbed_env):
+    from proofloop.hooks import handle_cursor_hook
+
+    tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
+    env = {**scrubbed_env, "PROOFLOOP_AGENT_SOURCE": "custom-agent"}
+    handle_cursor_hook({"command": "./deploy.sh"}, tmp_repo.root, env)
+    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    assert record.agent_source == "custom-agent"
+
+
+def test_cursor_hook_cli_deny(tmp_repo, monkeypatch):
+    tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
+    monkeypatch.chdir(tmp_repo.root)
+    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+    result = runner.invoke(
+        app, ["hook", "--agent", "cursor"],
+        input=json.dumps({"command": "vercel deploy", "cwd": "."}),
+    )
+    assert result.exit_code == 0
+    output = json.loads(result.stdout.strip().splitlines()[-1])
+    assert output["permission"] == "deny"
+    assert output["agent_message"]
+
+
+def test_cursor_hook_internal_error_fails_closed_exit_2(tmp_repo, monkeypatch):
+    """Cursor fails OPEN on non-zero exit codes other than 2 — an internal
+    error must print the Cursor deny JSON and exit exactly 2."""
+    import proofloop.cli as cli_module
+
+    monkeypatch.chdir(tmp_repo.root)
+
+    def boom(payload, root, env):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli_module, "handle_cursor_hook", boom)
+    result = runner.invoke(
+        app, ["hook", "--agent", "cursor"], input='{"command": "vercel deploy"}'
+    )
+    assert result.exit_code == 2
+    output = json.loads(result.stdout.strip().splitlines()[-1])
+    assert output["permission"] == "deny"
+    assert "internal error" in output["agent_message"]
+
+
+# -- Codex adapter (PreToolUse — same schema as Claude Code) -------------------
+
+
+def test_codex_hook_sets_agent_source(tmp_repo, monkeypatch):
+    tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
+    monkeypatch.chdir(tmp_repo.root)
+    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+    monkeypatch.delenv("PROOFLOOP_AGENT_SOURCE", raising=False)
+    result = runner.invoke(
+        app, ["hook", "--agent", "codex"],
+        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}),
+    )
+    assert result.exit_code == 0
+    output = json.loads(result.stdout.strip().splitlines()[-1])
+    assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    assert record.agent_source == "codex"
+
+
+def test_hook_agent_flag_does_not_override_env(tmp_repo, monkeypatch):
+    tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
+    monkeypatch.chdir(tmp_repo.root)
+    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+    monkeypatch.setenv("PROOFLOOP_AGENT_SOURCE", "my-pipeline")
+    runner.invoke(
+        app, ["hook", "--agent", "codex"],
+        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}),
+    )
+    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    assert record.agent_source == "my-pipeline"
+
+
+def test_hook_rejects_unknown_agent(tmp_repo, monkeypatch):
+    monkeypatch.chdir(tmp_repo.root)
+    result = runner.invoke(app, ["hook", "--agent", "copilot"], input="{}")
+    assert result.exit_code == 64
+
+
+def test_bare_hook_stays_claude_compatible(tmp_repo, monkeypatch):
+    """Existing .claude/settings.json files call `proofloop hook` bare."""
+    monkeypatch.chdir(tmp_repo.root)
+    result = runner.invoke(
+        app, ["hook"], input=json.dumps({"tool_input": {"command": "ls"}})
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {}

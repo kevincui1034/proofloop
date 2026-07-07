@@ -37,10 +37,32 @@ FIELD_ORDER = [
     "inputs_hash",
     "env_fingerprint",
     "resolves",
+    # --- additive: advisory surface (never enters `checks`) ---
+    "advisories",
+    "advisory_input",
+    "advisory_output",
+    "task_ref",
 ]
 
 #: Keys of each entry in ``checks`` (pinned).
 CHECK_ENTRY_KEYS = ["name", "type", "passed", "failure_class", "evidence"]
+
+#: Keys of each entry in ``advisories`` (pinned). Advisory findings are
+#: model judgment — recorded and (conditionally) surfaced, NEVER part of
+#: the block/allow decision, and never mixed into the ``checks`` array.
+ADVISORY_ENTRY_KEYS = [
+    "id",             # "<record_id>#<index>", e.g. "chk_012#0"
+    "concern",        # what the judge flagged
+    "kind",           # "discovery" | "adjudication"
+    "tier",           # 4 (bad engineering) | 5 (not what was asked)
+    "confidence",     # 0.0–1.0, drives the delivery classification
+    "grounded_in",    # prior record ids the finding cited
+    "target",         # "file:line" | None
+    "judge_model_id",
+    "delivery",       # "injected" | "held" | "staged" | "sent" | "suppressed"
+    "label",          # None | "confirmed" | "rejected"
+    "retraction",     # None | "staged" | "sent" (reject-after-inject only)
+]
 
 
 @dataclass
@@ -66,6 +88,10 @@ class MemoryRecord:
     inputs_hash: str = ""
     env_fingerprint: list[str] = field(default_factory=list)
     resolves: str | None = None
+    advisories: list[dict] = field(default_factory=list)
+    advisory_input: str = ""
+    advisory_output: str = ""
+    task_ref: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         raw = {
@@ -90,6 +116,10 @@ class MemoryRecord:
             "inputs_hash": self.inputs_hash,
             "env_fingerprint": self.env_fingerprint,
             "resolves": self.resolves,
+            "advisories": self.advisories,
+            "advisory_input": self.advisory_input,
+            "advisory_output": self.advisory_output,
+            "task_ref": self.task_ref,
         }
         return {key: raw[key] for key in FIELD_ORDER}
 
@@ -117,6 +147,10 @@ class MemoryRecord:
             inputs_hash=data.get("inputs_hash", ""),
             env_fingerprint=data.get("env_fingerprint", []),
             resolves=data.get("resolves"),
+            advisories=data.get("advisories", []),
+            advisory_input=data.get("advisory_input", ""),
+            advisory_output=data.get("advisory_output", ""),
+            task_ref=data.get("task_ref"),
         )
 
     def failed_checks(self) -> list[dict]:
