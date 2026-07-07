@@ -33,6 +33,8 @@ from .hooks import (
     AGENTS_SNIPPET,
     PROOFLOOP_TOML_TEMPLATE,
     deny_output,
+    detect_deploy_stack,
+    detect_extra_deploy_patterns,
     handle_hook,
 )
 from .memory.store import MemoryStore
@@ -438,6 +440,28 @@ def _merge_claude_hook(root: Path) -> str:
     return f"wrote PreToolUse hook → {settings_path}"
 
 
+def _render_proofloop_toml(extra_patterns: list[str]) -> str:
+    """Base template plus an active ``deploy_patterns_extra`` block when
+    ``proofloop init`` detected repo-local deploy entrypoints.
+
+    Patterns are written as TOML single-quoted literals (no escaping needed
+    for regex backslashes); the appended key lands under ``[hook]``, the
+    template's last section. A pattern containing a single quote can't sit in
+    a literal string, so it's skipped rather than mis-quoted.
+    """
+    usable = [p for p in extra_patterns if "'" not in p]
+    if not usable:
+        return PROOFLOOP_TOML_TEMPLATE
+    block = [
+        "",
+        "# Auto-detected repo-local deploy entrypoints (safe to edit):",
+        "deploy_patterns_extra = [",
+    ]
+    block += [f"  '{p}'," for p in usable]
+    block.append("]")
+    return PROOFLOOP_TOML_TEMPLATE + "\n".join(block) + "\n"
+
+
 @app.command()
 def init() -> None:
     """Set up proofloop in this repo: .proofloop/, agent hooks, config."""
@@ -452,12 +476,36 @@ def init() -> None:
         f"✓ detected agents: {', '.join(agents) if agents else 'none'}"
     )
 
+    stack = detect_deploy_stack(root)
+    if stack:
+        console.print(
+            f"✓ detected deploy targets: {', '.join(stack)} "
+            "(covered by the built-in patterns)"
+        )
+    else:
+        console.print(
+            "✓ no known deploy config found — built-in patterns still cover "
+            "the common CLIs"
+        )
+    extras = detect_extra_deploy_patterns(root)
+
     toml_path = root / ".proofloop.toml"
     if toml_path.exists():
         console.print(f"✓ {toml_path.name} already exists (left untouched)")
+        if extras:
+            console.print(
+                f"  › tip: {len(extras)} repo-local deploy script(s) detected — "
+                "add them under [hook].deploy_patterns_extra to gate them"
+            )
     else:
-        toml_path.write_text(PROOFLOOP_TOML_TEMPLATE)
-        console.print(f"✓ wrote {toml_path.name} template")
+        toml_path.write_text(_render_proofloop_toml(extras))
+        if extras:
+            console.print(
+                f"✓ wrote {toml_path.name} "
+                f"(seeded {len(extras)} repo-local deploy pattern(s))"
+            )
+        else:
+            console.print(f"✓ wrote {toml_path.name} template")
 
     console.print(f"✓ {_merge_claude_hook(root)}")
 

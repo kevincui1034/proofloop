@@ -131,12 +131,40 @@ etc.) are exempt so paths stay readable in proof records.
 ## Agent integration
 
 `proofloop init` installs a Claude Code `PreToolUse` hook that intercepts
-deploy-shaped shell commands (configurable in `.proofloop.toml [hook]`). A
-failing gate answers with a **deny** whose reason contains the failed checks,
-evidence, and exact fix steps — so the agent self-corrects. Everything else
-(non-deploy commands, passing gates) gets **no decision**, leaving Claude
-Code's normal permission flow untouched — the hook never auto-approves. For
-all agents, add the snippet from [AGENTS.md](AGENTS.md) to your repo.
+deploy-shaped shell commands. A failing gate answers with a **deny** whose
+reason contains the failed checks, evidence, and exact fix steps — so the
+agent self-corrects. Everything else (non-deploy commands, passing gates) gets
+**no decision**, leaving Claude Code's normal permission flow untouched — the
+hook never auto-approves. For all agents, add the snippet from
+[AGENTS.md](AGENTS.md) to your repo.
+
+### What counts as a "deploy"
+
+Out of the box the hook recognizes the common deploy surfaces — Vercel,
+Netlify, Fly, Railway, Cloudflare (`wrangler`), Heroku (`git push heroku`),
+AWS (`sam`/`cdk deploy`, `cloudformation deploy`), GCP (`gcloud run/app/functions deploy`),
+Kubernetes (`kubectl apply`, `helm upgrade`), Docker (`docker push`),
+Terraform/Pulumi (`apply`/`up`), Serverless/SST, Kamal, Capistrano,
+`npm/pnpm/yarn/bun run deploy`, `make deploy`, and `./deploy.sh`. Patterns are
+anchored to the command position, so a tool name inside a quoted string or a
+file argument (`cat wrangler.toml`, `git commit -m "add docker push"`) is not
+mistaken for a deploy.
+
+Tune it in `.proofloop.toml [hook]`:
+
+```toml
+[hook]
+# ADD to the built-ins (recommended — keeps every default):
+deploy_patterns_extra = ['(?:^|[;&|])\s*bin/release\b']
+
+# REPLACE them entirely (advanced — you own the whole list):
+# deploy_patterns = ['^make ship$']
+```
+
+`proofloop init` also **detects your stack** — it reads deploy markers
+(`fly.toml`, `wrangler.toml`, `Dockerfile`, `serverless.yml`, `*.tf`, …) to
+print what it found, and seeds `deploy_patterns_extra` from `package.json`
+deploy scripts the defaults might miss (e.g. `deploy:prod`).
 
 ## License
 

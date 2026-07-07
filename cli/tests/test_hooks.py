@@ -14,6 +14,9 @@ from proofloop.hooks import (
     DEFAULT_DEPLOY_PATTERNS,
     FINAL_INSTRUCTION,
     compile_deploy_patterns,
+    detect_deploy_stack,
+    detect_extra_deploy_patterns,
+    get_deploy_patterns,
     handle_hook,
     is_deploy_command,
     is_proofloop_invocation,
@@ -75,6 +78,138 @@ def test_default_patterns_ignore_normal_commands():
     ]
     for command in normal:
         assert not is_deploy_command(command, DEFAULT_DEPLOY_PATTERNS), command
+
+
+def test_expanded_defaults_cover_major_platforms():
+    deploys = [
+        "wrangler deploy",
+        "wrangler pages deploy",
+        "npx wrangler deploy",
+        "flyctl deploy",
+        "gcloud run deploy svc --source .",
+        "gcloud app deploy",
+        "gcloud builds submit --tag x",
+        "kubectl apply -f k8s/",
+        "kubectl rollout restart deploy/api",
+        "helm upgrade api ./chart",
+        "helm install api ./chart",
+        "docker push myrepo/app:latest",
+        "docker stack deploy -c stack.yml app",
+        "terraform apply -auto-approve",
+        "tofu apply",
+        "pulumi up --yes",
+        "serverless deploy",
+        "sls deploy --stage prod",
+        "sst deploy --stage prod",
+        "sam deploy --guided",
+        "cdk deploy",
+        "aws cloudformation deploy --template-file t.yml --stack-name s",
+        "kamal deploy",
+        "kamal redeploy",
+        "cap production deploy",
+        "git push heroku main",
+        "npm run deploy",
+        "pnpm run release",
+        "yarn run ship",
+        "bun run publish",
+        "make deploy",
+        "just release",
+        "render deploys create --service-id abc",
+        "DEBUG=1 vercel --prod",
+        "sudo docker push x/y",
+        "cd infra && terraform apply",
+    ]
+    for command in deploys:
+        assert is_deploy_command(command, DEFAULT_DEPLOY_PATTERNS), command
+
+
+def test_expanded_defaults_ignore_lookalikes():
+    """Tool names inside quotes, file args, or non-deploy subcommands must not
+    trip the anchored patterns."""
+    normal = [
+        'git commit -m "add wrangler deploy step"',
+        'git commit -m "fix docker push script"',
+        "cat wrangler.toml",
+        "cat Dockerfile",
+        "vim serverless.yml",
+        "kubectl get pods",
+        "helm list",
+        "docker build -t x .",
+        "terraform plan",
+        "pulumi preview",
+        "npm run build",
+        "npm test",
+        "make build",
+        "echo docker push",
+        "grep -rn 'kubectl apply' .",
+        "gcloud auth login",
+    ]
+    for command in normal:
+        assert not is_deploy_command(command, DEFAULT_DEPLOY_PATTERNS), command
+
+
+def test_deploy_patterns_extra_extends_defaults():
+    cfg = {"hook": {"deploy_patterns_extra": ["^just ship$"]}}
+    patterns = get_deploy_patterns(cfg)
+    assert "^just ship$" in patterns
+    assert any("vercel" in p for p in patterns)  # defaults retained
+    compiled = compile_deploy_patterns(patterns)
+    assert is_deploy_command("just ship", compiled)
+    assert is_deploy_command("fly deploy", compiled)  # a default is NOT lost
+
+
+def test_deploy_patterns_override_replaces_defaults():
+    cfg = {"hook": {"deploy_patterns": ["^only-this$"]}}
+    assert get_deploy_patterns(cfg) == ["^only-this$"]
+
+
+def test_override_and_extra_compose():
+    cfg = {"hook": {"deploy_patterns": ["^a$"], "deploy_patterns_extra": ["^b$", "^a$"]}}
+    assert get_deploy_patterns(cfg) == ["^a$", "^b$"]  # deduped, order preserved
+
+
+def test_detect_deploy_stack(tmp_path):
+    (tmp_path / "wrangler.toml").write_text("name = 'x'\n")
+    (tmp_path / "Dockerfile").write_text("FROM scratch\n")
+    (tmp_path / "main.tf").write_text("\n")
+    labels = detect_deploy_stack(tmp_path)
+    assert "Cloudflare (wrangler)" in labels
+    assert "Docker" in labels
+    assert "Terraform" in labels
+    assert detect_deploy_stack(tmp_path / "does-not-exist") == []  # missing dir → no crash
+
+
+def test_detect_extra_from_package_json(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {"scripts": {"deploy:prod": "vercel --prod", "build": "vite build", "deploy": "y"}}
+        )
+    )
+    extras = detect_extra_deploy_patterns(tmp_path)
+    # `deploy:prod` seeded; bare `deploy` already in defaults; `build` ignored.
+    assert len(extras) == 1
+    compiled = compile_deploy_patterns(
+        get_deploy_patterns({"hook": {"deploy_patterns_extra": extras}})
+    )
+    assert is_deploy_command("npm run deploy:prod", compiled)
+    assert is_deploy_command("fly deploy", compiled)  # defaults retained
+
+
+def test_init_seeds_detected_deploy_scripts(tmp_repo, monkeypatch):
+    import tomllib
+
+    tmp_repo.write(
+        "package.json", json.dumps({"scripts": {"deploy:prod": "vercel --prod"}})
+    )
+    monkeypatch.chdir(tmp_repo.root)
+    result = runner.invoke(app, ["init"])
+    assert result.exit_code == 0, result.output
+    toml_text = (tmp_repo.root / ".proofloop.toml").read_text()
+    assert "deploy_patterns_extra" in toml_text
+    cfg = tomllib.loads(toml_text)  # generated TOML must parse
+    compiled = compile_deploy_patterns(get_deploy_patterns(cfg))
+    assert is_deploy_command("npm run deploy:prod", compiled)
+    assert is_deploy_command("fly deploy", compiled)  # built-ins still present
 
 
 def test_non_deploy_command_gets_no_decision(tmp_repo, scrubbed_env):
