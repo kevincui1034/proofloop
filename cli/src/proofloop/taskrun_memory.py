@@ -19,7 +19,7 @@ TASK_RUNS_DIR = "task-runs"
 TASK_PASSED_LABEL = "task_passed"
 TASK_BLOCKED_LABEL = "task_blocked"
 
-_ITERATION_PATH_KEYS = ("prompt", "transcript", "codex_log", "assessment")
+_ITERATION_PATH_KEYS = ("prompt", "transcript", "codex_log", "assessment", "selected_task")
 
 
 def task_run_label(passed: object) -> str:

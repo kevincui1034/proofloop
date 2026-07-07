@@ -210,18 +210,29 @@ Then run the closed loop:
 
 ```bash
 proofloop task loop \
-  --task "Run BankerToolBench task btb_001 against the live app" \
   --benchmark bankertoolbench \
+  --task-source huggingface:Handshake-AI-Research/bankertoolbench \
+  --pick-task next \
   --require-marker "POST /api/orders" \
   -- npm run test:e2e
 ```
 
+When `--task` is omitted, `task loop` loads a benchmark task source and picks
+the task itself. `--pick-task next` advances a persisted cursor under
+`.proofloop/benchmark-state/<benchmark>.json`; `--pick-task random` supports
+`--task-seed`; `--task-id <id>` selects an explicit row; and repeated
+`--task-filter key=value` options filter task metadata before selection.
+Task sources can be local `tasks.jsonl` / `tasks.json` files, directories
+containing those files, URLs, or Hugging Face dataset specs such as
+`huggingface:Handshake-AI-Research/bankertoolbench`.
+
 `task loop` runs `codex exec --json` by default, captures the Codex trace,
 runs the verifier, judges the transcript/proof, feeds Proofloop feedback into
 the next Codex iteration, and stops at a pass verdict or the iteration limit.
-Every loop writes `.proofloop/task-runs/loop_NNN/loop.json`,
-`versions.jsonl`, and `changelog.md`; version rows include Codex exit code,
-verifier log, assessment path, feedback path, git head, and changed files.
+Every loop writes `.proofloop/task-runs/loop_NNN/selected-task.json`,
+`loop.json`, `versions.jsonl`, and `changelog.md`; version rows include Codex
+exit code, selected task, verifier log, assessment path, feedback path, git
+head, and changed files.
 
 ```bash
 proofloop task judge \

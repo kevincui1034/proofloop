@@ -382,6 +382,63 @@ def test_task_loop_runs_fake_codex_to_passing_verdict(tmp_repo, monkeypatch):
     assert "assistant_claim_only" in prompt
 
 
+def test_task_loop_selects_task_from_source_when_task_omitted(tmp_repo, monkeypatch):
+    monkeypatch.chdir(tmp_repo.root)
+    source = tmp_repo.write(
+        "tasks.jsonl",
+        json.dumps(
+            {
+                "task_id": "btb_pick",
+                "final_prompt": "Run the Proofloop-picked BTB task.",
+                "product": "M&A",
+            }
+        )
+        + "\n",
+    )
+    fake_codex = tmp_repo.write(
+        "fake_codex.py",
+        "import json\n"
+        "print(json.dumps({'role': 'assistant', 'content': 'Done.'}))\n",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "loop",
+            "--benchmark",
+            "bankertoolbench",
+            "--task-source",
+            str(source),
+            "--pick-task",
+            "next",
+            "--task-filter",
+            "product=M&A",
+            "--require-marker",
+            "POST /api/orders",
+            "--codex-command",
+            f'"{sys.executable}" "{fake_codex}"',
+            "--max-iterations",
+            "1",
+            "--",
+            sys.executable,
+            "-c",
+            "print('POST /api/orders status 200')",
+        ],
+    )
+
+    assert result.exit_code == 0
+    loop_dir = tmp_repo.root / ".proofloop" / "task-runs" / "loop_001"
+    selected = json.loads((loop_dir / "selected-task.json").read_text())
+    assert selected["task_id"] == "btb_pick"
+    prompt = (loop_dir / "iteration-01-prompt.md").read_text()
+    assert "Run the Proofloop-picked BTB task." in prompt
+    loop = json.loads((loop_dir / "loop.json").read_text())
+    assert loop["selected_task_path"].endswith("selected-task.json")
+    assert loop["selected_task"]["task_id"] == "btb_pick"
+    assert loop["iterations"][0]["selected_task"].endswith("selected-task.json")
+
+
 def test_task_loop_blocks_failed_codex_even_when_verifier_passes(tmp_repo, monkeypatch):
     monkeypatch.chdir(tmp_repo.root)
     fake_codex = tmp_repo.write(

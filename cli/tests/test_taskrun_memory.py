@@ -95,6 +95,7 @@ def test_task_run_memory_links_loop_artifacts(tmp_repo):
                     "transcript": ".proofloop/task-runs/loop_001/iteration-01-codex.jsonl",
                     "codex_log": ".proofloop/task-runs/loop_001/iteration-01-codex.stderr.log",
                     "assessment": ".proofloop/task-runs/task_001/assessment.json",
+                    "selected_task": ".proofloop/task-runs/loop_001/selected-task.json",
                     "passed": True,
                     "issues": [],
                 }
@@ -116,12 +117,14 @@ def test_task_run_memory_links_loop_artifacts(tmp_repo):
     assert ".proofloop/task-runs/loop_001/loop.json" in assessment_row["evidence_paths"]
     assert ".proofloop/task-runs/loop_001/changelog.md" in assessment_row["evidence_paths"]
     assert ".proofloop/task-runs/loop_001/iteration-01-prompt.md" in assessment_row["evidence_paths"]
+    assert ".proofloop/task-runs/loop_001/selected-task.json" in assessment_row["evidence_paths"]
 
     loop_row = rows[1]
     assert loop_row["source"] == "task_loop"
     assert loop_row["label"] == "task_passed"
     assert loop_row["task"] == "Run BTB task on the live UI"
     assert loop_row["iterations"][0]["assessment"] == ".proofloop/task-runs/task_001/assessment.json"
+    assert loop_row["iterations"][0]["selected_task"] == ".proofloop/task-runs/loop_001/selected-task.json"
     assert loop_row["proof_refs"] == [
         ".proofloop/task-runs/loop_001/iteration-01-codex.stderr.log"
     ]

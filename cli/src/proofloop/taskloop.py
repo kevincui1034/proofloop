@@ -142,6 +142,8 @@ class LoopResult:
     run_dir: str
     changelog_path: str
     versions_path: str
+    selected_task_path: str | None = None
+    selected_task: dict | None = None
     final_assessment_path: str | None = None
 
     def to_dict(self) -> dict:
@@ -152,6 +154,8 @@ class LoopResult:
             "run_dir": self.run_dir,
             "changelog_path": self.changelog_path,
             "versions_path": self.versions_path,
+            "selected_task_path": self.selected_task_path,
+            "selected_task": self.selected_task,
             "final_assessment_path": self.final_assessment_path,
         }
 
@@ -563,6 +567,7 @@ def run_codex_task_loop(
     codex_cmd: str | None,
     max_iterations: int,
     env: Mapping[str, str],
+    selected_task: dict | None = None,
 ) -> LoopResult:
     root = Path(root).resolve()
     loop_id, loop_dir = _next_loop_id(root)
@@ -580,6 +585,15 @@ def run_codex_task_loop(
     final_assessment_path: str | None = None
     changelog_path = loop_dir / "changelog.md"
     versions_path = loop_dir / "versions.jsonl"
+    selected_task_path: str | None = None
+    if selected_task:
+        selected_path = loop_dir / "selected-task.json"
+        selected_path.write_text(
+            scrub_text(json.dumps(selected_task, indent=2, ensure_ascii=False), env)
+            + "\n",
+            encoding="utf-8",
+        )
+        selected_task_path = str(selected_path.relative_to(root))
     baseline_changed_files = _git_changed_files(root)
 
     for index in range(1, max_iterations + 1):
@@ -591,6 +605,7 @@ def run_codex_task_loop(
             previous_feedback=feedback,
             iteration=index,
             max_iterations=max_iterations,
+            selected_task=selected_task,
         )
         prompt_path = loop_dir / f"iteration-{index:02d}-prompt.md"
         prompt_path.write_text(scrub_text(prompt, env), encoding="utf-8")
@@ -623,6 +638,7 @@ def run_codex_task_loop(
             "transcript": str(trace_path.relative_to(root)),
             "codex_log": str(codex_log_path.relative_to(root)),
             "assessment": assessment.assessment_path,
+            "selected_task": selected_task_path,
             "verify_log": assessment.verify_log,
             "feedback": assessment.feedback_path,
             "passed": assessment.passed,
@@ -636,7 +652,15 @@ def run_codex_task_loop(
         iterations.append(row)
         with versions_path.open("a", encoding="utf-8") as fh:
             fh.write(scrub_text(json.dumps(row, ensure_ascii=False), env) + "\n")
-        _write_loop_changelog(changelog_path, loop_id, task, benchmark, iterations, env)
+        _write_loop_changelog(
+            changelog_path,
+            loop_id,
+            task,
+            benchmark,
+            iterations,
+            env,
+            selected_task_path=selected_task_path,
+        )
         if assessment.passed:
             passed = True
             break
@@ -654,6 +678,8 @@ def run_codex_task_loop(
         run_dir=str(loop_dir.relative_to(root)),
         changelog_path=str(changelog_path.relative_to(root)),
         versions_path=str(versions_path.relative_to(root)),
+        selected_task_path=selected_task_path,
+        selected_task=selected_task,
         final_assessment_path=final_assessment_path,
     )
     (loop_dir / "loop.json").write_text(
@@ -774,6 +800,7 @@ def _loop_prompt(
     previous_feedback: str,
     iteration: int,
     max_iterations: int,
+    selected_task: dict | None = None,
 ) -> str:
     setup_commands = adapter.get("setup_commands") or []
     run_commands = adapter.get("run_commands") or []
@@ -803,6 +830,12 @@ def _loop_prompt(
         lines += ["", "Adapter verify command candidates:", json.dumps(verify_commands)]
     if markers:
         lines += ["", "Required live markers:", json.dumps(markers)]
+    if selected_task:
+        lines += [
+            "",
+            "Proofloop-selected benchmark task:",
+            json.dumps(selected_task, ensure_ascii=False),
+        ]
     if isinstance(meta_rubric, dict) and meta_rubric:
         lines += [
             "",
@@ -821,6 +854,7 @@ def _write_loop_changelog(
     benchmark: str,
     iterations: list[dict],
     env: Mapping[str, str],
+    selected_task_path: str | None = None,
 ) -> None:
     lines = [
         f"# Proofloop task loop {loop_id}",
@@ -828,9 +862,10 @@ def _write_loop_changelog(
         f"- benchmark: {benchmark}",
         f"- task: {task}",
         f"- updated_at: {now_iso()}",
-        "",
-        "## Iterations",
     ]
+    if selected_task_path:
+        lines.append(f"- selected_task: {selected_task_path}")
+    lines += ["", "## Iterations"]
     for row in iterations:
         lines += [
             "",
@@ -842,6 +877,8 @@ def _write_loop_changelog(
             f"- transcript: {row['transcript']}",
             f"- assessment: {row['assessment']}",
         ]
+        if row.get("selected_task"):
+            lines.append(f"- selected_task: {row['selected_task']}")
         if row.get("verify_log"):
             lines.append(f"- verify_log: {row['verify_log']}")
         if row.get("feedback"):

@@ -56,6 +56,7 @@ from .tasksetup import (
     ensure_benchmark_adapter,
     load_adapter,
 )
+from .tasksource import TaskSourceError, select_benchmark_task
 
 try:  # typer >= 0.16 vendors click as typer._click
     from typer._click import exceptions as click_exceptions
@@ -463,15 +464,46 @@ def task_judge(
 def task_loop(
     ctx: typer.Context,
     task: str = typer.Option(
-        ...,
+        None,
         "--task",
-        help="Benchmark/user task to run through Codex until Proofloop verdict.",
+        help=(
+            "Benchmark/user task to run through Codex. If omitted, Proofloop "
+            "selects one from --task-source for supported benchmarks."
+        ),
     ),
     benchmark: str = typer.Option(
         "bankertoolbench",
         "--benchmark",
         "-b",
         help="Benchmark adapter name.",
+    ),
+    task_source: str = typer.Option(
+        None,
+        "--task-source",
+        help=(
+            "Benchmark task source: local tasks.jsonl/tasks.json path or directory, "
+            "URL, hf:<repo>, or huggingface:<repo>."
+        ),
+    ),
+    pick_task: str = typer.Option(
+        "next",
+        "--pick-task",
+        help="Task selection: next, random, or an explicit task id.",
+    ),
+    task_id: str = typer.Option(
+        None,
+        "--task-id",
+        help="Explicit task id to select from the task source.",
+    ),
+    task_filter: list[str] = typer.Option(
+        [],
+        "--task-filter",
+        help="Filter task source rows by key=value, e.g. product=M&A.",
+    ),
+    task_seed: int = typer.Option(
+        None,
+        "--task-seed",
+        help="Seed for --pick-task random.",
     ),
     max_iterations: int = typer.Option(
         3,
@@ -509,9 +541,31 @@ def task_loop(
         verify_commands = adapter.get("verify_commands") or []
         if verify_commands and isinstance(verify_commands[0], list):
             verify_cmd = [str(part) for part in verify_commands[0]]
+    selected_task = None
+    resolved_task = task
+    if not resolved_task or task_source or task_id or pick_task != "next" or task_filter:
+        try:
+            selected_task = select_benchmark_task(
+                root,
+                benchmark,
+                task_source,
+                pick_task,
+                task_id=task_id,
+                filters=_parse_task_filters(task_filter),
+                seed=task_seed,
+            )
+        except TaskSourceError as exc:
+            if resolved_task:
+                selected_task = None
+            else:
+                _usage_error(str(exc))
+        else:
+            resolved_task = selected_task["task"]
+    if not resolved_task:
+        _usage_error("missing task; pass --task or configure a supported --task-source")
     result = run_codex_task_loop(
         root,
-        task=task,
+        task=resolved_task,
         benchmark=benchmark,
         adapter_path=adapter_path if adapter_path.is_file() else None,
         verify_cmd=verify_cmd,
@@ -519,6 +573,7 @@ def task_loop(
         codex_cmd=codex_command,
         max_iterations=max_iterations,
         env=dict(os.environ),
+        selected_task=selected_task,
     )
     if json_out:
         typer.echo(json.dumps(result.to_dict(), ensure_ascii=False))
@@ -534,6 +589,16 @@ def task_loop(
             fg=typer.colors.RED,
         )
     raise typer.Exit(loop_exit_code(result))
+
+
+def _parse_task_filters(values: list[str]) -> dict[str, str]:
+    filters: dict[str, str] = {}
+    for value in values:
+        key, sep, expected = value.partition("=")
+        if not sep or not key.strip():
+            _usage_error("--task-filter must be key=value")
+        filters[key.strip()] = expected.strip()
+    return filters
 
 
 @task_app.command("export-memory")
