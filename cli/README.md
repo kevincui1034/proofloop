@@ -234,6 +234,61 @@ Every loop writes `.proofloop/task-runs/loop_NNN/selected-task.json`,
 exit code, selected task, verifier log, assessment path, feedback path, git
 head, and changed files.
 
+### Example: live BankerToolBench run on a Noderoom app
+
+Reference links:
+
+- Proofloop repo: <https://github.com/kevincui1034/proofloop>
+- BankerToolBench repo: <https://github.com/Handshake-AI-Research/bankertoolbench>
+- BankerToolBench dataset: <https://huggingface.co/datasets/handshake-ai-research/bankertoolbench>
+
+Pasteable setup prompt for a Codex session inside your Noderoom checkout:
+
+```text
+Use Proofloop to run one real BankerToolBench task end to end against this
+Noderoom app, using the live local UI/backend and the existing local env/API
+keys already configured for this repo.
+
+Requirements:
+- Do not ask me to manually pick the BankerToolBench task. Let Proofloop pick it.
+- Do not paste or print API keys. Use the repo's normal .env.local, Convex env,
+  or shell environment, and let Proofloop scrub persisted traces.
+- Run setup if missing: hooks, AGENTS.md guidance, Proofloop config, and the
+  bankertoolbench adapter.
+- Install dependencies, start or reuse live Noderoom services, and verify that
+  the local UI and backend are reachable.
+- Run the selected BankerToolBench task through the live UI/API path.
+- Do not satisfy the benchmark with mocks, stubs, fake providers, hard-coded
+  fixtures, canned screenshots, or deterministic demo paths unless the selected
+  task explicitly requires them.
+- If Proofloop blocks the run, follow its judge feedback and continue until a
+  pass verdict or the iteration limit.
+- Finish by reporting the selected task id, live URLs/endpoints exercised,
+  verifier command, artifact paths, and final Proofloop verdict.
+
+Commands to use:
+
+proofloop task setup --benchmark bankertoolbench --refresh-adapter
+
+proofloop task loop \
+  --benchmark bankertoolbench \
+  --task-source huggingface:Handshake-AI-Research/bankertoolbench \
+  --pick-task next \
+  --max-iterations 3 \
+  --require-marker "status 200" \
+  -- npm run test:e2e
+
+proofloop task export-memory
+
+Success criteria:
+- .proofloop/task-runs/loop_NNN/selected-task.json shows the Proofloop-picked
+  BankerToolBench task.
+- The final verifier exits 0.
+- The judge assessment passes with no local-setup-refusal, mock/stub/demo-path,
+  missing-live-evidence, or failed-agent-execution findings.
+- .proofloop/task-run-memory.jsonl contains the exported task_passed row.
+```
+
 ```bash
 proofloop task judge \
   --task "Run BankerToolBench task btb_001 against the live app" \
