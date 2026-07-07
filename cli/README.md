@@ -239,6 +239,7 @@ head, and changed files.
 Reference links:
 
 - Proofloop repo: <https://github.com/kevincui1034/proofloop>
+- Noderoom repo: <https://github.com/HomenShum/noderoom>
 - BankerToolBench repo: <https://github.com/Handshake-AI-Research/bankertoolbench>
 - BankerToolBench dataset: <https://huggingface.co/datasets/handshake-ai-research/bankertoolbench>
 
