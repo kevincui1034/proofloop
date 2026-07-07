@@ -234,6 +234,9 @@ def run(
     except PermissionError:
         _fail(f"command not executable: {cmd[0]}", 126)
         return  # unreachable
+    except OSError as exc:
+        _fail(f"command not executable: {cmd[0]} ({exc})", 126)
+        return  # unreachable
     assert proc.stdout is not None
     with log_path.open("w", encoding="utf-8") as log:
         for line in proc.stdout:
@@ -988,7 +991,7 @@ def _merge_claude_hook(root: Path) -> str:
         }
     )
     settings_dir.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    settings_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return f"wrote PreToolUse hook → {settings_path}"
 
 
@@ -1025,7 +1028,7 @@ def _merge_codex_hooks(root: Path) -> str:
         }
     )
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    hooks_path.write_text(json.dumps(data, indent=2) + "\n")
+    hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return f"wrote PreToolUse hook → {hooks_path}"
 
 
@@ -1055,7 +1058,7 @@ def _merge_cursor_hooks(root: Path) -> str:
         return f"{hooks_path} already wired (proofloop hook present)"
     before.append({"command": "proofloop hook --agent cursor"})
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    hooks_path.write_text(json.dumps(data, indent=2) + "\n")
+    hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return f"wrote beforeShellExecution hook → {hooks_path}"
 
 
@@ -1113,7 +1116,7 @@ def init(
 ) -> None:
     """Set up proofloop in this repo: .proofloop/, agent hooks, config."""
     root = Path.cwd()
-    console = Console(highlight=False)
+    console = Console(highlight=False, soft_wrap=True)
 
     (root / ".proofloop").mkdir(exist_ok=True)
     console.print("✓ created .proofloop/")
@@ -1145,7 +1148,7 @@ def init(
                 "add them under [hook].deploy_patterns_extra to gate them"
             )
     else:
-        toml_path.write_text(_render_proofloop_toml(extras))
+        toml_path.write_text(_render_proofloop_toml(extras), encoding="utf-8")
         if extras:
             console.print(
                 f"✓ wrote {toml_path.name} "

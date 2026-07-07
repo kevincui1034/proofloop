@@ -1,6 +1,7 @@
 """tests_not_run / test_failure: marker lifecycle + `proofloop run` stamps."""
 
 import json
+import os
 import sys
 
 from typer.testing import CliRunner
@@ -69,7 +70,10 @@ def test_run_command_stamps_and_tees(tmp_repo, make_ctx, monkeypatch):
     assert "42-ran" in result.stdout
     session = load_session(tmp_repo.root)
     assert session["tests"]["exit_code"] == 0
-    assert session["tests"]["cmd"][0] == sys.executable
+    if os.name == "nt":
+        assert session["tests"]["cmd"][0].endswith("\\python.exe")
+    else:
+        assert session["tests"]["cmd"][0] == sys.executable
     logs = list((tmp_repo.root / ".proofloop" / "runs").glob("tests-*.log"))
     assert len(logs) == 1
     assert "42-ran" in logs[0].read_text()
@@ -105,6 +109,7 @@ def test_run_maps_signal_exit_codes(tmp_repo, monkeypatch):
             "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
         ],
     )
-    assert result.exit_code == 143  # 128 + SIGTERM(15)
+    expected = 15 if os.name == "nt" else 143
+    assert result.exit_code == expected
     session = load_session(tmp_repo.root)
-    assert session["tests"]["exit_code"] == 143
+    assert session["tests"]["exit_code"] == expected

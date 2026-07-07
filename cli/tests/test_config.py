@@ -1,5 +1,6 @@
-"""User-level judge config store: save/load, 0600 mode, resolve precedence."""
+"""User-level judge config store: save/load, private mode, resolve precedence."""
 
+import os
 import stat
 
 from proofloop import config
@@ -36,8 +37,12 @@ def test_save_without_model_omits_key(tmp_path):
     assert "model" not in judge
 
 
-def test_file_mode_is_0600(tmp_path):
+def test_file_mode_is_0600_on_posix(tmp_path):
     path = config.save_judge_config("openrouter", "k", env=_env(tmp_path))
+    if os.name == "nt":
+        # Windows chmod does not expose POSIX owner/group/other bits through stat.
+        assert path.exists()
+        return
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
