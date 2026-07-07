@@ -1,14 +1,17 @@
 """Gate orchestration invariants — the product's core guarantees."""
 
+import io
 import json
 import sys
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 import proofloop.cli as cli_module
 from proofloop.cli import app
 from proofloop.gate import run_gate, scrub_text
+from proofloop.judge import DeterministicJudge
 from proofloop.memory.store import MemoryStore
 from proofloop.session import stamp
 
@@ -410,3 +413,34 @@ def test_engine_consulted_without_strong_recall(failing_repo, scrubbed_env, monk
     result = run_gate(failing_repo.root, "deploy", ["true"], env=llm_env, render=False)
     assert result.blocked
     assert len(spy.calls) == 1  # first occurrence: the engine explains
+
+
+# --------------------------------------------------------------------------
+# discoverability hint: nudge to `proofloop login` only when blocked with a
+# deterministic diagnosis and no LLM configured
+# --------------------------------------------------------------------------
+
+LOGIN_HINT = "proofloop login"
+
+
+def _render(root, env, judge=None):
+    buf = io.StringIO()
+    con = Console(file=buf, width=120, highlight=False, no_color=True)
+    run_gate(root, "deploy", ["true"], env=env, render=True, console=con, judge=judge)
+    return buf.getvalue()
+
+
+def test_blocked_deterministic_without_llm_shows_login_hint(failing_repo, scrubbed_env):
+    out = _render(failing_repo.root, scrubbed_env, judge=DeterministicJudge())
+    assert LOGIN_HINT in out
+
+
+def test_blocked_hint_suppressed_when_llm_configured(failing_repo, scrubbed_env):
+    env = dict(scrubbed_env, ANTHROPIC_API_KEY="k")  # llm_configured → True
+    out = _render(failing_repo.root, env, judge=DeterministicJudge())
+    assert LOGIN_HINT not in out
+
+
+def test_allowed_run_never_shows_login_hint(passing_repo, scrubbed_env):
+    out = _render(passing_repo.root, scrubbed_env, judge=DeterministicJudge())
+    assert LOGIN_HINT not in out

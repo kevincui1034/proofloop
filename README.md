@@ -62,7 +62,7 @@ proofloop guard deploy -- vercel --prod
 
 `pipx install "git+https://github.com/kevincui1034/proofloop.git#subdirectory=cli"` works too (isolated). Or clone and `pip install -e cli` for local development.
 
-Runs fully offline. Set `OPENROUTER_API_KEY` to enable LLM-written diagnoses (deterministic explanations otherwise — pass/fail never depends on a model).
+Runs fully offline with no key. For LLM-written explanations, `proofloop login` picks a provider — OpenRouter, Anthropic, or OpenAI — and stores the key at `~/.config/proofloop/config.toml` (mode `0600`, outside the repo). Env vars still work and take precedence: `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, plus `PROOFLOOP_JUDGE_PROVIDER` and `PROOFLOOP_JUDGE_MODEL`. Defaults are cheap per provider (OpenRouter `openai/gpt-4o-mini`, Anthropic `claude-haiku-4-5`, OpenAI `gpt-4o-mini`). The LLM only writes the explanation — deterministic checks still decide pass/fail.
 
 ## Docs
 

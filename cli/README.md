@@ -51,6 +51,7 @@ proofloop guard deploy -- ./deploy.sh
 | `proofloop run <kind> -- <cmd...>` | Run tests/build/lint/typecheck and stamp a worktree-bound session marker. |
 | `proofloop resolve <id> --status accepted\|false_positive` | Label whether a block was correct. |
 | `proofloop confirm <id> --outcome shipped\|rolled_back` | Post-deploy ground truth. |
+| `proofloop login` / `logout` | Store / remove an LLM API key for judge explanations (BYOK). |
 | `proofloop memory list` / `show <id>` | Inspect the memory. |
 | `proofloop init` | Create `.proofloop/`, write the Claude Code PreToolUse hook, `.proofloop.toml`, print the AGENTS.md snippet. |
 
@@ -79,13 +80,41 @@ See [TAXONOMY.md](TAXONOMY.md) for the open failure-class spec.
 
 Failures are *explained* — never decided — by a judge. By default this is a
 deterministic template engine (`deterministic/proofloop-v1`, zero cost,
-offline). Set `OPENROUTER_API_KEY` to route explanations through a cheap LLM
-via OpenRouter (model: `PROOFLOOP_JUDGE_MODEL`, default `openai/gpt-4o-mini`;
-per-call cost is appended to `.proofloop/ledger.jsonl`). Set
-`PROOFLOOP_NO_LLM=1` to force offline. Any LLM error falls back to the
-deterministic judge. On a strong recurrence (same failure-class set and
-shared evidence with a recalled record) the prior diagnosis is cited
-deterministically — **no model call**, even when a key is set.
+offline). Pass/fail never depends on a model: deterministic checks decide, the
+LLM only writes the explanation, any LLM error falls back to the deterministic
+judge, and the gate runs fully offline with no key. On a strong recurrence
+(same failure-class set and shared evidence with a recalled record) the prior
+diagnosis is cited deterministically — **no model call**, even when a key is set.
+
+### LLM explanations (optional, BYOK)
+
+To get LLM-written explanations, bring your own key — no file editing:
+
+```bash
+proofloop login          # pick a provider, paste a key (hidden input)
+proofloop logout         # remove it
+# scriptable:  proofloop login --provider anthropic --api-key <key> --no-verify
+```
+
+`login` stores the key at `~/.config/proofloop/config.toml` (mode `0600`,
+outside the repo — one key across all your projects) and does a best-effort
+live check. Pick any provider; the defaults are deliberately cheap because the
+judge only explains a deterministic finding:
+
+| Provider | Default model | Cost tier |
+| --- | --- | --- |
+| OpenRouter (default) | `openai/gpt-4o-mini` | cheap |
+| Anthropic | `claude-haiku-4-5` | cheapest Claude |
+| OpenAI | `gpt-4o-mini` | cheap |
+
+All three adapters call the provider's REST endpoint directly over `httpx` —
+no vendor SDK. Per-call cost is appended to `.proofloop/ledger.jsonl`.
+
+Env vars still work and take precedence over the stored config:
+`OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` select and key a
+provider (auto-detected in that order); `PROOFLOOP_JUDGE_PROVIDER` names one
+explicitly; `PROOFLOOP_JUDGE_MODEL` overrides the model; `PROOFLOOP_NO_LLM=1`
+forces offline.
 
 ## Memory — the dataset is the product
 

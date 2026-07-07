@@ -25,6 +25,7 @@ from typing import Mapping
 
 from . import __version__, ux
 from .checks import CheckContext, CheckResult, run_checks
+from .config import llm_configured
 from .context import capture_context, git_summary, load_config
 from .judge import DeterministicJudge, JudgeInput, JudgeOutput, get_judge
 from .judge.deterministic import compile_fix_steps
@@ -328,7 +329,17 @@ def run_gate(
     elif render:
         con = console if console is not None else ux.get_console()
         if failures:
-            ux.render_blocked(con, record, failures, recalled, cmd, fix_steps, forced=force)
+            # Nudge to `proofloop login` only when the block fell back to the
+            # deterministic engine for lack of any configured LLM.
+            suggest_login = (
+                blocked
+                and judge_output.model_id.startswith("deterministic/")
+                and not llm_configured(env)
+            )
+            ux.render_blocked(
+                con, record, failures, recalled, cmd, fix_steps,
+                forced=force, suggest_login=suggest_login,
+            )
         else:
             ux.render_allowed(con, record, results, cmd, no_exec)
 

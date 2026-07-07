@@ -38,10 +38,25 @@ class Repo:
 
 
 @pytest.fixture(autouse=True)
-def _offline_judge(monkeypatch):
-    """Tests that go through os.environ (CLI paths) must never hit a real LLM."""
+def _offline_judge(monkeypatch, tmp_path):
+    """Tests that go through os.environ (CLI paths) must never hit a real LLM.
+
+    Also isolates the user-level judge config from the developer's real
+    ~/.config so tests never read a real key and are reproducible anywhere.
+    """
     monkeypatch.setenv("PROOFLOOP_NO_LLM", "1")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    for var in (
+        "OPENROUTER_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "PROOFLOOP_JUDGE_PROVIDER",
+        "PROOFLOOP_JUDGE_MODEL",
+        "XDG_CONFIG_HOME",
+    ):
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture

@@ -27,6 +27,7 @@ from typer.core import TyperCommand
 
 from . import __version__
 from .agent_detect import detect_installed_agents
+from .config import clear_judge_config, config_path, save_judge_config
 from .gate import EXIT_INTERNAL_ERROR, run_gate, scrub_text
 from .hooks import (
     AGENTS_SNIPPET,
@@ -56,6 +57,7 @@ app.add_typer(memory_app, name="memory")
 
 PASSTHROUGH = {"allow_extra_args": True, "ignore_unknown_options": True}
 RUN_KINDS = ("tests", "build", "lint", "typecheck")
+JUDGE_PROVIDERS = ("openrouter", "anthropic", "openai")
 
 _SENTINEL_KEY = "proofloop_has_sentinel"
 
@@ -239,6 +241,115 @@ def confirm(
     if not ok:
         _fail(f"record {record_id} not found", 1)
     typer.echo(f"{record_id} confirmed: {outcome}")
+
+
+# --------------------------------------------------------------------------
+# login / logout — BYOK judge key onboarding
+# --------------------------------------------------------------------------
+
+
+def _mask_key(key: str) -> str:
+    """Render a key as ``sk-…last4`` — never the full secret."""
+    if len(key) <= 8:
+        return "…" + key[-2:] if len(key) >= 2 else "…"
+    return f"{key[:3]}…{key[-4:]}"
+
+
+def _verify_login(console: Console, provider: str, api_key: str, model: str | None) -> None:
+    """Best-effort live check — never fails the command."""
+    from .checks.base import CheckResult, Evidence
+    from .judge import AnthropicJudge, JudgeInput, OpenAIJudge, OpenRouterJudge
+
+    adapters = {
+        "openrouter": OpenRouterJudge,
+        "anthropic": AnthropicJudge,
+        "openai": OpenAIJudge,
+    }
+    judge = adapters[provider](api_key=api_key, model=model)
+    probe = JudgeInput(
+        action="deploy",
+        repo_id="proofloop-login-check",
+        failures=[
+            CheckResult(
+                name="env_vars",
+                passed=False,
+                failure_class="missing_env_var",
+                evidence=[Evidence(file="app.py", line=1, detail="EXAMPLE_KEY")],
+                fix_hint="set EXAMPLE_KEY",
+            )
+        ],
+        git_summary="",
+    )
+    output = judge.diagnose(probe)  # falls back to deterministic on any error
+    if not output.model_id.startswith("deterministic/"):
+        console.print(f"✓ key works ({output.model_id})")
+    else:
+        console.print(
+            "  (saved, but couldn't verify — offline or network error)", style="dim"
+        )
+
+
+@app.command()
+def login(
+    provider: str = typer.Option(
+        None, "--provider", help="openrouter | anthropic | openai (default openrouter)."
+    ),
+    api_key: str = typer.Option(
+        None, "--api-key", help="API key — skips the prompts; never echoed or logged."
+    ),
+    model: str = typer.Option(
+        None, "--model", help="Model id (blank = the provider's default)."
+    ),
+    no_verify: bool = typer.Option(
+        False, "--no-verify", help="Skip the best-effort live key check."
+    ),
+) -> None:
+    """Store an LLM API key so the judge writes explanations (BYOK).
+
+    Interactive by default; pass --api-key to run non-interactively. The key
+    is written to ~/.config/proofloop/config.toml (0600), never echoed.
+    """
+    console = Console(highlight=False)
+    interactive = api_key is None
+
+    if provider is None and interactive:
+        provider = typer.prompt(
+            "Provider (openrouter/anthropic/openai)", default="openrouter"
+        )
+    provider = (provider or "openrouter").strip().lower()
+    if provider not in JUDGE_PROVIDERS:
+        _usage_error(f"--provider must be one of: {', '.join(JUDGE_PROVIDERS)}")
+
+    if api_key is None:
+        api_key = typer.prompt("API key", hide_input=True)
+    if not api_key:
+        _usage_error("no API key provided")
+
+    if model is None and interactive:
+        entered = typer.prompt(
+            "Model (blank = provider default)", default="", show_default=False
+        )
+        model = entered or None
+    if model is not None:
+        model = model.strip() or None
+
+    path = save_judge_config(provider, api_key, model=model, env=os.environ)
+    console.print(f"✓ saved {provider} key → {path} (mode 0600)")
+    console.print(f"  key: {_mask_key(api_key)}")
+
+    if not no_verify:
+        _verify_login(console, provider, api_key, model)
+
+
+@app.command()
+def logout() -> None:
+    """Remove the stored LLM key (the judge falls back to deterministic)."""
+    console = Console(highlight=False)
+    removed = clear_judge_config(env=os.environ)
+    if removed:
+        console.print(f"✓ removed {removed} judge config → {config_path(os.environ)}")
+    else:
+        console.print("no stored judge config to remove", style="dim")
 
 
 # --------------------------------------------------------------------------

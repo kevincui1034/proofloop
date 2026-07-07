@@ -42,6 +42,7 @@ def render_blocked(
     cmd: list[str] | None,
     fix_steps: list[str],
     forced: bool = False,
+    suggest_login: bool = False,
 ) -> None:
     action = record.action_intercepted.upper()
     parts: list = [_evidence_table(failures)]
@@ -100,6 +101,14 @@ def render_blocked(
             style="dim",
         )
     )
+    if suggest_login:
+        console.print(
+            Text(
+                "  › Diagnoses are deterministic. Run 'proofloop login' for "
+                "LLM-written explanations.",
+                style="dim",
+            )
+        )
 
 
 def render_allowed(
