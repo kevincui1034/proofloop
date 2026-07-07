@@ -13,9 +13,12 @@ from proofloop.config import ADVISORY_DEFAULTS, advisory_settings
 from proofloop.gate import resolve_task_ref, run_gate
 from proofloop.hooks import task_from_payload
 from proofloop.judge.advisory import (
+    ADVISORY_RUBRIC_KEYS,
+    ADVISORY_SYSTEM_PROMPT,
     AdvisoryFinding,
     AdvisoryInput,
     OpenRouterAdvisoryJudge,
+    compute_advisory_confidence,
     parse_findings,
 )
 from proofloop.judge.advisory_mock import MockAdvisoryJudge
@@ -44,6 +47,12 @@ def _finding(
         grounded_in=grounded_in or [],
         target=target,
     )
+
+
+def _rubric(**overrides):
+    data = {key: False for key in ADVISORY_RUBRIC_KEYS}
+    data.update(overrides)
+    return data
 
 
 @pytest.fixture
@@ -265,6 +274,44 @@ def test_parse_findings_valid_and_fenced():
         assert f.concern == "no retry on the POST"  # whitespace normalized
         assert f.grounded_in == ["chk_001"]  # hallucinated id filtered
         assert f.target == "a.py:1"
+
+
+def test_parse_findings_computes_confidence_from_rubric():
+    rubric = _rubric(
+        visible_in_diff=True,
+        has_specific_target=True,
+        grounded_in_labeled_prior=True,
+        concern_is_concrete_and_actionable=True,
+    )
+    payload = {
+        "findings": [
+            {
+                "concern": "no retry on the webhook POST",
+                "kind": "discovery",
+                "tier": 4,
+                "confidence": 0.99,
+                "model_confidence": 0.88,
+                "rubric": rubric,
+                "grounded_in": ["chk_001"],
+                "target": "notifications.py:12",
+            }
+        ]
+    }
+
+    findings = parse_findings(json.dumps(payload), known_ids={"chk_001"})
+
+    assert len(findings) == 1
+    assert findings[0].confidence == pytest.approx(0.70)
+    assert findings[0].model_confidence == pytest.approx(0.88)
+    assert findings[0].rubric == rubric
+    assert compute_advisory_confidence(
+        _rubric(
+            visible_in_diff=True,
+            has_specific_target=True,
+            concern_is_concrete_and_actionable=True,
+            contradicted_by_rejected_signature=True,
+        )
+    ) == 0.0
 
 
 def test_parse_findings_drops_malformed():
@@ -499,7 +546,13 @@ def test_openrouter_advisory_success_parses_and_ledgers(tmp_path, record_factory
                                     "concern": "no retry on the webhook POST",
                                     "kind": "adjudication",
                                     "tier": 4,
-                                    "confidence": 0.8,
+                                    "model_confidence": 0.8,
+                                    "rubric": _rubric(
+                                        visible_in_diff=True,
+                                        has_specific_target=True,
+                                        grounded_in_labeled_prior=True,
+                                        concern_is_concrete_and_actionable=True,
+                                    ),
                                     "grounded_in": ["chk_001", "chk_777"],
                                     "target": "notifications.py:12",
                                 }
@@ -516,6 +569,7 @@ def test_openrouter_advisory_success_parses_and_ledgers(tmp_path, record_factory
     assert output.model_id == "openai/gpt-4o-mini"
     assert output.cost_usd == 0.0003
     assert len(output.findings) == 1
+    assert output.findings[0].confidence == pytest.approx(0.70)
     assert output.findings[0].grounded_in == ["chk_001"]  # chk_777 not offered
     ledger = (tmp_path / "ledger.jsonl").read_text().strip().splitlines()
     assert json.loads(ledger[0])["cost_usd"] == 0.0003
@@ -548,6 +602,8 @@ def test_advisory_prompt_contains_the_essentials(record_factory):
     assert "chk_003" in text and "resolution=false_positive" in text
     assert "do NOT re-raise" in text
     assert "old rejected concern" in text
+    assert '"rubric"' in ADVISORY_SYSTEM_PROMPT
+    assert "analysis only" in ADVISORY_SYSTEM_PROMPT
     # no task → the prompt says so
     advisory_input.task_ref = None
     assert "do not emit tier-5" in advisory_input.to_prompt_text()

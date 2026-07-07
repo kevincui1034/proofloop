@@ -292,6 +292,12 @@ def _classify_advisories(
             "kind": finding.kind,
             "tier": finding.tier,
             "confidence": round(finding.confidence, 3),
+            "rubric": finding.rubric,
+            "model_confidence": (
+                round(finding.model_confidence, 3)
+                if finding.model_confidence is not None
+                else None
+            ),
             "grounded_in": finding.grounded_in,
             "target": scrub(finding.target) if finding.target else None,
             "judge_model_id": model_id,

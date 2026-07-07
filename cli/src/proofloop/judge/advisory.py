@@ -31,6 +31,34 @@ from .openrouter import OpenRouterJudge
 
 KINDS = ("discovery", "adjudication")
 TIERS = (4, 5)
+ADVISORY_RUBRIC_KEYS = (
+    "visible_in_diff",
+    "has_specific_target",
+    "grounded_in_labeled_prior",
+    "matches_prior_pattern",
+    "references_failed_check_for_adjudication",
+    "concern_is_concrete_and_actionable",
+    "depends_on_missing_context",
+    "weak_or_generic_language",
+    "multi_hop_speculation",
+    "contradicted_by_rejected_signature",
+    "purely_speculative_claim",
+)
+ADVISORY_RUBRIC_WEIGHTS = {
+    "visible_in_diff": 0.30,
+    "has_specific_target": 0.10,
+    "grounded_in_labeled_prior": 0.20,
+    "matches_prior_pattern": 0.10,
+    "references_failed_check_for_adjudication": 0.15,
+    "concern_is_concrete_and_actionable": 0.10,
+    "depends_on_missing_context": -0.20,
+    "weak_or_generic_language": -0.15,
+    "multi_hop_speculation": -0.25,
+}
+ADVISORY_RUBRIC_VETOES = (
+    "contradicted_by_rejected_signature",
+    "purely_speculative_claim",
+)
 
 ADVISORY_SYSTEM_PROMPT = (
     "You are Proofloop's advisory reviewer. Deterministic checks have already "
@@ -46,7 +74,15 @@ ADVISORY_SYSTEM_PROMPT = (
     "listed as previously rejected. Only flag what is visible in the diff or "
     "check results — no speculation; an empty findings list is a good answer. "
     'Respond as strict JSON: {"findings": [{"concern": "<1-2 sentences>", '
-    '"kind": "discovery"|"adjudication", "tier": 4|5, "confidence": <0.0-1.0>, '
+    '"kind": "discovery"|"adjudication", "tier": 4|5, '
+    '"rubric": {"visible_in_diff": true|false, "has_specific_target": true|false, '
+    '"grounded_in_labeled_prior": true|false, "matches_prior_pattern": true|false, '
+    '"references_failed_check_for_adjudication": true|false, '
+    '"concern_is_concrete_and_actionable": true|false, '
+    '"depends_on_missing_context": true|false, "weak_or_generic_language": true|false, '
+    '"multi_hop_speculation": true|false, "contradicted_by_rejected_signature": true|false, '
+    '"purely_speculative_claim": true|false}, '
+    '"model_confidence": <0.0-1.0 optional, analysis only>, '
     '"grounded_in": ["<prior record id>", ...], "target": "<file:line>"|null}]}.'
 )
 
@@ -59,6 +95,8 @@ class AdvisoryFinding:
     confidence: float
     grounded_in: list[str] = field(default_factory=list)
     target: str | None = None
+    rubric: dict[str, bool] | None = None
+    model_confidence: float | None = None
 
 
 @dataclass
@@ -167,13 +205,20 @@ def parse_findings(content: str, known_ids: set[str]) -> list[AdvisoryFinding]:
         concern = item.get("concern")
         kind = item.get("kind")
         tier = item.get("tier")
-        confidence = item.get("confidence")
         if not isinstance(concern, str) or not concern.strip():
             continue
         if kind not in KINDS or tier not in TIERS:
             continue
-        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
-            continue
+        rubric = _parse_rubric(item.get("rubric"))
+        model_confidence = _parse_confidence(
+            item.get("model_confidence", item.get("confidence"))
+        )
+        if rubric is None:
+            confidence = _parse_confidence(item.get("confidence"))
+            if confidence is None:
+                continue
+        else:
+            confidence = compute_advisory_confidence(rubric)
         grounded = item.get("grounded_in")
         grounded_in = [
             g for g in grounded if isinstance(g, str) and g in known_ids
@@ -186,12 +231,42 @@ def parse_findings(content: str, known_ids: set[str]) -> list[AdvisoryFinding]:
                 concern=" ".join(concern.split()),
                 kind=kind,
                 tier=tier,
-                confidence=min(1.0, max(0.0, float(confidence))),
+                confidence=confidence,
                 grounded_in=grounded_in,
                 target=target,
+                rubric=rubric,
+                model_confidence=model_confidence,
             )
         )
     return findings
+
+
+def _parse_confidence(value) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return min(1.0, max(0.0, float(value)))
+
+
+def _parse_rubric(value) -> dict[str, bool] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: value.get(key, False)
+        if isinstance(value.get(key, False), bool)
+        else False
+        for key in ADVISORY_RUBRIC_KEYS
+    }
+
+
+def compute_advisory_confidence(rubric: dict[str, bool]) -> float:
+    """Score fixed advisory rubric facts without trusting a model scalar."""
+    if any(rubric.get(key, False) for key in ADVISORY_RUBRIC_VETOES):
+        return 0.0
+    score = 0.0
+    for key, weight in ADVISORY_RUBRIC_WEIGHTS.items():
+        if rubric.get(key, False):
+            score += weight
+    return min(1.0, max(0.0, score))
 
 
 class _ChatAdvisoryMixin:
