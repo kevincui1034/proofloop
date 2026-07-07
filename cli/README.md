@@ -49,6 +49,10 @@ proofloop guard deploy -- ./deploy.sh
 | --- | --- |
 | `proofloop guard <action> -- <cmd...>` | Run readiness checks; exec `<cmd>` only if they pass. `--force` (logged), `--no-exec`, `--json`, `--env-file` (evaluate env checks against the deploy target's env file instead of your shell). |
 | `proofloop run <kind> -- <cmd...>` | Run tests/build/lint/typecheck and stamp a worktree-bound session marker. |
+| `proofloop task setup --benchmark <name>` | Search the repo and repair task-loop config, hooks, AGENTS.md guidance, and benchmark adapter metadata. |
+| `proofloop task loop --task "..." -- <verify-cmd...>` | Run Codex through a benchmark task, judge the trace/proof, feed back fixes, and repeat until pass or iteration limit. |
+| `proofloop task judge [options] -- <verify-cmd...>` | Audit an agent benchmark episode for local-setup refusals, mock/stub completions, and missing live UI/API evidence. Writes `.proofloop/task-runs/<id>/assessment.json` and, on block, `feedback.md`. |
+| `proofloop task export-memory` | Export `.proofloop/task-runs` outcomes to additive `.proofloop/task-run-memory.jsonl` rows. |
 | `proofloop resolve <id> --status accepted\|false_positive` | Label whether a block was correct. |
 | `proofloop confirm <id> --outcome shipped\|rolled_back` | Post-deploy ground truth. |
 | `proofloop advisory approve\|reject\|confirm <id#i>` | Review an advisory finding (e.g. `chk_012#0`): approve a held one for delivery, reject a wrong one (it never re-fires; a delivered one is retracted on the next event), confirm a correct one. |
@@ -178,6 +182,150 @@ Tune or disable in `.proofloop.toml`:
 # tiers = [4, 5]        # [4] mutes tier-5 findings
 # model = ""            # blank → the judge's resolved model
 ```
+
+## Task judge for benchmark loops
+
+For benchmark tasks that are not deploy commands, use the task judge as the
+outer loop around a Codex/agent episode. It reads the agent transcript plus
+proof logs, optionally runs a verifier command, and blocks the run when the
+agent refused local setup or claimed success through a mock/stub/demo path
+instead of a live UI/API path.
+
+Start by letting Proofloop search the repo and repair the local setup surface:
+
+```bash
+proofloop task setup --benchmark bankertoolbench
+```
+
+That creates missing Proofloop config, Codex/Claude/Cursor hooks, repo
+`AGENTS.md` task-loop guidance, and `.proofloop/benchmark-adapters/<name>.json`
+with inferred install/startup/verify commands, live UI/API requirements,
+mock/stub rejection signals, the success-evidence schema, and a live-browser
+meta-rubric. The meta-rubric lets an LLM propose benchmark-specific judged
+fields while Proofloop keeps the field contract, source requirements, vetoes,
+and scoring ownership fixed. Existing adapter custom fields and custom
+commands are preserved unless you pass `--refresh-adapter`.
+
+Then run the closed loop:
+
+```bash
+proofloop task loop \
+  --benchmark bankertoolbench \
+  --task-source huggingface:Handshake-AI-Research/bankertoolbench \
+  --pick-task next \
+  --require-marker "POST /api/orders" \
+  -- npm run test:e2e
+```
+
+When `--task` is omitted, `task loop` loads a benchmark task source and picks
+the task itself. `--pick-task next` advances a persisted cursor under
+`.proofloop/benchmark-state/<benchmark>.json`; `--pick-task random` supports
+`--task-seed`; `--task-id <id>` selects an explicit row; and repeated
+`--task-filter key=value` options filter task metadata before selection.
+Task sources can be local `tasks.jsonl` / `tasks.json` files, directories
+containing those files, URLs, or Hugging Face dataset specs such as
+`huggingface:Handshake-AI-Research/bankertoolbench`.
+
+`task loop` runs `codex exec --json` by default, captures the Codex trace,
+runs the verifier, judges the transcript/proof, feeds Proofloop feedback into
+the next Codex iteration, and stops at a pass verdict or the iteration limit.
+Every loop writes `.proofloop/task-runs/loop_NNN/selected-task.json`,
+`loop.json`, `versions.jsonl`, and `changelog.md`; version rows include Codex
+exit code, selected task, verifier log, assessment path, feedback path, git
+head, and changed files.
+
+### Example: live BankerToolBench run on a Noderoom app
+
+Reference links:
+
+- Proofloop repo: <https://github.com/kevincui1034/proofloop>
+- Noderoom repo: <https://github.com/HomenShum/noderoom>
+- BankerToolBench repo: <https://github.com/Handshake-AI-Research/bankertoolbench>
+- BankerToolBench dataset: <https://huggingface.co/datasets/handshake-ai-research/bankertoolbench>
+
+Pasteable setup prompt for a Codex session inside your Noderoom checkout:
+
+```text
+Use Proofloop to run one real BankerToolBench task end to end against this
+Noderoom app, using the live local UI/backend and the existing local env/API
+keys already configured for this repo.
+
+Requirements:
+- Do not ask me to manually pick the BankerToolBench task. Let Proofloop pick it.
+- Do not paste or print API keys. Use the repo's normal .env.local, Convex env,
+  or shell environment, and let Proofloop scrub persisted traces.
+- Run setup if missing: hooks, AGENTS.md guidance, Proofloop config, and the
+  bankertoolbench adapter.
+- Install dependencies, start or reuse live Noderoom services, and verify that
+  the local UI and backend are reachable.
+- Run the selected BankerToolBench task through the live UI/API path.
+- Do not satisfy the benchmark with mocks, stubs, fake providers, hard-coded
+  fixtures, canned screenshots, or deterministic demo paths unless the selected
+  task explicitly requires them.
+- If Proofloop blocks the run, follow its judge feedback and continue until a
+  pass verdict or the iteration limit.
+- Finish by reporting the selected task id, live URLs/endpoints exercised,
+  verifier command, artifact paths, and final Proofloop verdict.
+
+Commands to use:
+
+proofloop task setup --benchmark bankertoolbench --refresh-adapter
+
+proofloop task loop \
+  --benchmark bankertoolbench \
+  --task-source huggingface:Handshake-AI-Research/bankertoolbench \
+  --pick-task next \
+  --max-iterations 3 \
+  --require-marker "status 200" \
+  -- npm run test:e2e
+
+proofloop task export-memory
+
+Success criteria:
+- .proofloop/task-runs/loop_NNN/selected-task.json shows the Proofloop-picked
+  BankerToolBench task.
+- The final verifier exits 0.
+- The judge assessment passes with no local-setup-refusal, mock/stub/demo-path,
+  missing-live-evidence, or failed-agent-execution findings.
+- .proofloop/task-run-memory.jsonl contains the exported task_passed row.
+```
+
+```bash
+proofloop task judge \
+  --task "Run BankerToolBench task btb_001 against the live app" \
+  --transcript .codex/session.jsonl \
+  --proof artifacts/network.log \
+  --require-marker "POST /api/orders" \
+  -- npm run test:e2e
+```
+
+On a block, Proofloop writes `.proofloop/task-runs/task_NNN/feedback.md` with
+a Codex-facing corrective instruction: set up the local project, start the
+required services, run the task end to end, avoid mocks/stubs/hard-coded demo
+paths, collect live browser/API evidence, and rerun the verifier. The command
+exits `2`, matching the deploy gate's blocked status. On pass, it exits `0`
+and persists the assessment JSON. When live evidence is required, markers must
+appear in trusted verifier/tool/proof output; the assistant's own claim is not
+enough.
+
+Task-run outcomes can be exported as a separate dataset layer:
+
+```bash
+proofloop task export-memory
+```
+
+This writes `.proofloop/task-run-memory.jsonl` with `task_passed` /
+`task_blocked` labels and artifact references. It deliberately does not append
+to `.proofloop/memory.jsonl`, so deploy/advisory memory remains the authority
+for production gate decisions.
+
+When agent hooks are installed, a blocked task judge also stages that feedback
+for the next Claude/Codex/Cursor tool event. The hook delivers it once as
+additional context without granting permission or auto-approving the command.
+
+This layer is intentionally separate from the deploy gate: it judges task
+execution evidence and transcript behavior; it does not change deterministic
+deploy readiness checks or advisory findings.
 
 ## Memory — the dataset is the product
 

@@ -30,6 +30,7 @@ from .context import load_config
 from .envfile import parse_env_file
 from .gate import GateResult, run_gate
 from .judge.deterministic import compile_fix_steps
+from .taskloop import drain_pending_task_feedback
 
 # Start of a shell command: line start, or right after a separator (; | &,
 # which covers && and ||), allowing a leading `sudo`, VAR=value assignments,
@@ -615,9 +616,14 @@ def handle_hook(payload: dict, root: Path, env: Mapping[str, str]) -> dict:
         command = tool_input.get("command") or ""
     except Exception:
         return no_decision_output()
+    pending_task_notes = drain_pending_task_feedback(root)
     result = _gate_command(command, root, env, task_ref=task_from_payload(payload))
     if result is None:
+        if pending_task_notes:
+            return additional_context_output(pending_task_notes)
         return no_decision_output()
+    if pending_task_notes:
+        result.agent_notes = pending_task_notes + result.agent_notes
     if result.failures:
         return deny_output(build_deny_reason(result))
     if result.agent_notes:
@@ -670,9 +676,14 @@ def handle_cursor_hook(payload: dict, root: Path, env: Mapping[str, str]) -> dic
     env.setdefault("PROOFLOOP_AGENT_SOURCE", "cursor")
     # Cursor payloads don't document a transcript ref today; the capture
     # is a safe no-op when the key is absent.
+    pending_task_notes = drain_pending_task_feedback(root)
     result = _gate_command(command, root, env, task_ref=task_from_payload(payload))
     if result is None:
+        if pending_task_notes:
+            return cursor_context_output(pending_task_notes)
         return no_decision_output()
+    if pending_task_notes:
+        result.agent_notes = pending_task_notes + result.agent_notes
     if result.failures:
         return cursor_deny_output(build_deny_reason(result))
     if result.agent_notes:

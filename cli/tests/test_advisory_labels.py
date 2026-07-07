@@ -204,7 +204,8 @@ def test_advisory_signature_is_rewording_stable():
 def _confirmed_entry(record_id, concern="deploy script ignores curl failures", label="confirmed"):
     return {
         "id": f"{record_id}#0", "concern": concern, "kind": "discovery",
-        "tier": 4, "confidence": 0.9, "grounded_in": [], "target": "deploy.sh:3",
+        "tier": 4, "confidence": 0.9, "rubric": None, "model_confidence": None,
+        "grounded_in": [], "target": "deploy.sh:3",
         "judge_model_id": "m", "delivery": "injected", "label": label,
         "retraction": None,
     }
@@ -289,7 +290,8 @@ def test_rejected_advisory_signatures_scoped_to_repo(record_factory, tmp_path):
     store = MemoryStore(tmp_path / ".proofloop")
     entry = {
         "id": "chk_001#0", "concern": "no retry on webhook", "kind": "discovery",
-        "tier": 4, "confidence": 0.8, "grounded_in": [], "target": "n.py:1",
+        "tier": 4, "confidence": 0.8, "rubric": None, "model_confidence": None,
+        "grounded_in": [], "target": "n.py:1",
         "judge_model_id": "m", "delivery": "held", "label": "rejected",
         "retraction": None,
     }

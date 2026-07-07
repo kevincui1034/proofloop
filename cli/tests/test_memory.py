@@ -1,6 +1,7 @@
 """Memory: schema pin, store roundtrip, recall ranking, resolutions."""
 
 import json
+import os
 import subprocess
 import sys
 
@@ -78,6 +79,8 @@ def test_advisory_fields_default_empty_and_roundtrip(tmp_path, record_factory):
         "kind": "discovery",
         "tier": 4,
         "confidence": 0.8,
+        "rubric": None,
+        "model_confidence": None,
         "grounded_in": [],
         "target": "notifications.py:12",
         "judge_model_id": "mock/advisory",
@@ -410,7 +413,10 @@ def test_store_importable_without_fcntl(monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(store_mod)  # restore the POSIX state for other tests
-    assert store_mod.fcntl is not None
+    if os.name == "nt":
+        assert store_mod.fcntl is None
+    else:
+        assert store_mod.fcntl is not None
 
 
 def test_windows_lock_fallback_serializes(monkeypatch):

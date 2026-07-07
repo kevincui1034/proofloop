@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import sys
 
 import pytest
@@ -283,7 +284,8 @@ def test_signal_killed_child_maps_to_128_plus_signal(passing_repo, scrubbed_env)
         env=scrubbed_env,
         render=False,
     )
-    assert result.exit_code == 128 + 15  # SIGTERM → 143, not 241
+    expected = 15 if os.name == "nt" else 128 + 15
+    assert result.exit_code == expected
 
 
 # --------------------------------------------------------------------------

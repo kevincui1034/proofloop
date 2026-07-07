@@ -292,6 +292,12 @@ def _classify_advisories(
             "kind": finding.kind,
             "tier": finding.tier,
             "confidence": round(finding.confidence, 3),
+            "rubric": finding.rubric,
+            "model_confidence": (
+                round(finding.model_confidence, 3)
+                if finding.model_confidence is not None
+                else None
+            ),
             "grounded_in": finding.grounded_in,
             "target": scrub(finding.target) if finding.target else None,
             "judge_model_id": model_id,
@@ -525,12 +531,16 @@ def run_gate(
         "task_ref": task_ref,  # names/intent only; scrubbed above
     }
     (run_dir / "checks.json").write_text(
-        scrub_text(json.dumps(checks_payload, indent=2, ensure_ascii=False), scrub_env)
+        scrub_text(json.dumps(checks_payload, indent=2, ensure_ascii=False), scrub_env),
+        encoding="utf-8",
     )
     (run_dir / "context.json").write_text(
-        scrub_text(json.dumps(context_payload, indent=2, ensure_ascii=False), scrub_env)
+        scrub_text(json.dumps(context_payload, indent=2, ensure_ascii=False), scrub_env),
+        encoding="utf-8",
     )
-    (run_dir / "diff.patch").write_text(scrub_text(run_context.diff_excerpt, scrub_env))
+    (run_dir / "diff.patch").write_text(
+        scrub_text(run_context.diff_excerpt, scrub_env), encoding="utf-8"
+    )
 
     # 7. Build + persist the training-ready record (scrubbed)
     resolution = None
@@ -631,6 +641,9 @@ def run_gate(
             rc = 127
         except PermissionError:
             sys.stderr.write(f"proofloop: command not executable: {cmd[0]}\n")
+            rc = 126
+        except OSError as exc:
+            sys.stderr.write(f"proofloop: command not executable: {cmd[0]} ({exc})\n")
             rc = 126
         # A signal-killed child reports a negative returncode; use the
         # shell convention 128 + signal instead of wrapping modulo 256.

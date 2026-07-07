@@ -55,7 +55,9 @@ ADVISORY_ENTRY_KEYS = [
     "concern",        # what the judge flagged
     "kind",           # "discovery" | "adjudication"
     "tier",           # 4 (bad engineering) | 5 (not what was asked)
-    "confidence",     # 0.0–1.0, drives the delivery classification
+    "confidence",     # 0.0–1.0 computed by Proofloop, drives delivery
+    "rubric",         # fixed boolean facts used to compute confidence
+    "model_confidence",  # optional model scalar retained for analysis only
     "grounded_in",    # prior record ids the finding cited
     "target",         # "file:line" | None
     "judge_model_id",
