@@ -1,12 +1,14 @@
 """tests_not_run / test_failure: marker lifecycle + `proofloop run` stamps."""
 
 import json
+import os
 import sys
 
 from typer.testing import CliRunner
 
 from proofloop.checks.tests import check_tests
 from proofloop.cli import app
+from proofloop.gate import scrub_text
 from proofloop.session import load_session, stamp
 
 runner = CliRunner()
@@ -69,7 +71,10 @@ def test_run_command_stamps_and_tees(tmp_repo, make_ctx, monkeypatch):
     assert "42-ran" in result.stdout
     session = load_session(tmp_repo.root)
     assert session["tests"]["exit_code"] == 0
-    assert session["tests"]["cmd"][0] == sys.executable
+    # cmd is scrubbed on persist (gate.py scrub invariant). On hosted CI the
+    # interpreter path can overlap an env value (e.g. setup-python's
+    # pythonLocation), so compare against the scrubbed form, not the raw path.
+    assert session["tests"]["cmd"][0] == scrub_text(sys.executable, os.environ)
     logs = list((tmp_repo.root / ".proofloop" / "runs").glob("tests-*.log"))
     assert len(logs) == 1
     assert "42-ran" in logs[0].read_text()
