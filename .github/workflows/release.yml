@@ -1,0 +1,75 @@
+name: Release
+
+# Publishing uses PyPI Trusted Publishing (OIDC) — no API-token secret
+# anywhere. MANUAL STEP, sequenced BEFORE the first tag push: register the
+# pending publisher on pypi.org (and test.pypi.org for dry runs) with
+# project "proofloop", owner "kevincui1034", repo "proofloop", workflow
+# "release.yml", environment "pypi" / "testpypi". The first OIDC publish
+# fails (and burns the tag) unless the publisher is registered first.
+#
+# Dry run: Actions → Release → Run workflow (publishes to TestPyPI), then:
+#   pipx install --index-url https://test.pypi.org/simple/ \
+#     --pip-args="--extra-index-url https://pypi.org/simple/" proofloop
+# Real release: bump BOTH version strings (cli/pyproject.toml +
+# cli/src/proofloop/__init__.py — test_version_sync pins them), tag vX.Y.Z,
+# push the tag.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # dry run → TestPyPI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tooling
+        run: pip install build
+      - name: Run the test suite
+        run: |
+          pip install -e "cli[dev]"
+          python -m pytest cli/tests -q
+      - name: Build sdist + wheel
+        run: python -m build
+        working-directory: cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: cli/dist/
+
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write # OIDC Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # OIDC Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

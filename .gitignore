@@ -25,3 +25,4 @@ npm-debug.log*
 # Internal strategy docs — keep local, out of the public repo
 proofloop-claude-code-handoff-final.md
 proofloop-full-scope.md
+.rocketride/

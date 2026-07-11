@@ -1,0 +1,9 @@
+# Proofloop config for the demo storefront.
+
+[commands]
+# stdlib-only, offline: the marker mechanism records exit codes; it does not
+# care what tool produced them, so compileall stands in for a real build/lint.
+# (compileall's __pycache__ output is safe here: the demo workdir has no .git,
+# so the worktree digest uses the file walk, which prunes __pycache__.)
+build = "python3 -m compileall -q ."
+lint = "python3 -m compileall -q app.py"
