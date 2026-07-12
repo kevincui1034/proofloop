@@ -264,6 +264,10 @@ def test_missing_child_after_pass_exits_127(passing_repo, scrubbed_env):
     assert result.exit_code == 127
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX exec-bit / 126 convention; Windows raises WinError 193 instead",
+)
 def test_non_executable_child_after_pass_exits_126(passing_repo, scrubbed_env):
     script = passing_repo.root / "not-executable.sh"
     script.write_text("#!/bin/sh\necho hi\n")  # no +x bit
@@ -275,6 +279,10 @@ def test_non_executable_child_after_pass_exits_126(passing_repo, scrubbed_env):
     assert result.exit_code == 126
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX signal semantics (SIGTERM → 143); no equivalent on Windows",
+)
 def test_signal_killed_child_maps_to_128_plus_signal(passing_repo, scrubbed_env):
     result = run_gate(
         passing_repo.root,

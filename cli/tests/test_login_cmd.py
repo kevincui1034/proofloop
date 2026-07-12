@@ -1,6 +1,7 @@
 """proofloop login / logout — BYOK key onboarding via the CLI."""
 
 import stat
+import sys
 
 from typer.testing import CliRunner
 
@@ -28,7 +29,9 @@ def test_login_writes_config_and_selects_adapter(monkeypatch, tmp_path):
     loaded = config.load_config()
     assert loaded["judge"]["provider"] == "anthropic"
     assert loaded["judge"]["api_key"] == "sk-ant-xxxxxxxx"
-    assert stat.S_IMODE(config.config_path().stat().st_mode) == 0o600
+    # 0600 is POSIX-only; Windows os.chmod can't express it.
+    if sys.platform != "win32":
+        assert stat.S_IMODE(config.config_path().stat().st_mode) == 0o600
 
     # masked key shown; full key never printed
     assert "sk-ant-xxxxxxxx" not in result.output

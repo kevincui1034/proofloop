@@ -409,8 +409,11 @@ def test_store_importable_without_fcntl(monkeypatch):
         assert store_mod.msvcrt is fake_msvcrt
     finally:
         monkeypatch.undo()
-        importlib.reload(store_mod)  # restore the POSIX state for other tests
-    assert store_mod.fcntl is not None
+        importlib.reload(store_mod)  # restore the real platform state
+    # fcntl is the POSIX lock backend; on Windows it genuinely doesn't exist
+    # (msvcrt is used), so only the POSIX baseline can assert it's present.
+    if sys.platform != "win32":
+        assert store_mod.fcntl is not None
 
 
 def test_windows_lock_fallback_serializes(monkeypatch):

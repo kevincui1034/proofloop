@@ -4,6 +4,7 @@ import json
 import os
 import sys
 
+import pytest
 from typer.testing import CliRunner
 
 from proofloop.checks.tests import check_tests
@@ -98,6 +99,10 @@ def test_run_rejects_unknown_kind(tmp_repo, monkeypatch):
     assert result.exit_code == 64  # EX_USAGE — 2 is reserved for BLOCKED
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX signal semantics (SIGTERM → 143); no equivalent on Windows",
+)
 def test_run_maps_signal_exit_codes(tmp_repo, monkeypatch):
     """A signal-killed child stamps and exits 128+N (shell convention),
     never the raw negative returncode."""

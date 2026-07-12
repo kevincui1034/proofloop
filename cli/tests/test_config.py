@@ -1,6 +1,9 @@
 """User-level judge config store: save/load, 0600 mode, resolve precedence."""
 
 import stat
+import sys
+
+import pytest
 
 from proofloop import config
 
@@ -36,6 +39,9 @@ def test_save_without_model_omits_key(tmp_path):
     assert "model" not in judge
 
 
+# POSIX permission bits only — Windows os.chmod can't express 0600, so the
+# key file falls back to the per-user profile dir's ACLs for isolation.
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode only")
 def test_file_mode_is_0600(tmp_path):
     path = config.save_judge_config("openrouter", "k", env=_env(tmp_path))
     assert stat.S_IMODE(path.stat().st_mode) == 0o600

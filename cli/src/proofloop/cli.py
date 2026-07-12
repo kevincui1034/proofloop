@@ -635,7 +635,7 @@ def _merge_claude_hook(root: Path) -> str:
     data: dict = {}
     if settings_path.is_file():
         try:
-            data = json.loads(settings_path.read_text() or "{}")
+            data = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError:
             return f"skipped {settings_path} (existing file is not valid JSON — not clobbering)"
     hooks = data.setdefault("hooks", {})
@@ -656,7 +656,7 @@ def _merge_claude_hook(root: Path) -> str:
         }
     )
     settings_dir.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    settings_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return f"wrote PreToolUse hook → {settings_path}"
 
 
@@ -672,7 +672,7 @@ def _merge_codex_hooks(root: Path) -> str:
     data: dict = {}
     if hooks_path.is_file():
         try:
-            data = json.loads(hooks_path.read_text() or "{}")
+            data = json.loads(hooks_path.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError:
             return f"skipped {hooks_path} (existing file is not valid JSON — not clobbering)"
     hooks = data.setdefault("hooks", {})
@@ -693,7 +693,7 @@ def _merge_codex_hooks(root: Path) -> str:
         }
     )
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    hooks_path.write_text(json.dumps(data, indent=2) + "\n")
+    hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return f"wrote PreToolUse hook → {hooks_path}"
 
 
@@ -709,7 +709,7 @@ def _merge_cursor_hooks(root: Path) -> str:
     data: dict = {}
     if hooks_path.is_file():
         try:
-            data = json.loads(hooks_path.read_text() or "{}")
+            data = json.loads(hooks_path.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError:
             return f"skipped {hooks_path} (existing file is not valid JSON — not clobbering)"
     data.setdefault("version", 1)
@@ -723,7 +723,7 @@ def _merge_cursor_hooks(root: Path) -> str:
         return f"{hooks_path} already wired (proofloop hook present)"
     before.append({"command": "proofloop hook --agent cursor"})
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    hooks_path.write_text(json.dumps(data, indent=2) + "\n")
+    hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return f"wrote beforeShellExecution hook → {hooks_path}"
 
 
@@ -813,7 +813,7 @@ def init(
                 "add them under [hook].deploy_patterns_extra to gate them"
             )
     else:
-        toml_path.write_text(_render_proofloop_toml(extras))
+        toml_path.write_text(_render_proofloop_toml(extras), encoding="utf-8")
         if extras:
             console.print(
                 f"✓ wrote {toml_path.name} "

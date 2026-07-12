@@ -525,12 +525,16 @@ def run_gate(
         "task_ref": task_ref,  # names/intent only; scrubbed above
     }
     (run_dir / "checks.json").write_text(
-        scrub_text(json.dumps(checks_payload, indent=2, ensure_ascii=False), scrub_env)
+        scrub_text(json.dumps(checks_payload, indent=2, ensure_ascii=False), scrub_env),
+        encoding="utf-8",
     )
     (run_dir / "context.json").write_text(
-        scrub_text(json.dumps(context_payload, indent=2, ensure_ascii=False), scrub_env)
+        scrub_text(json.dumps(context_payload, indent=2, ensure_ascii=False), scrub_env),
+        encoding="utf-8",
     )
-    (run_dir / "diff.patch").write_text(scrub_text(run_context.diff_excerpt, scrub_env))
+    (run_dir / "diff.patch").write_text(
+        scrub_text(run_context.diff_excerpt, scrub_env), encoding="utf-8"
+    )
 
     # 7. Build + persist the training-ready record (scrubbed)
     resolution = None
