@@ -8,10 +8,10 @@ import json
 
 from typer.testing import CliRunner
 
-from proofloop.checks.base import CheckResult, Evidence
-from proofloop.cli import app
-from proofloop.memory.recall import class_reliability, recall
-from proofloop.memory.store import MemoryStore
+from proofjury.checks.base import CheckResult, Evidence
+from proofjury.cli import app
+from proofjury.memory.recall import class_reliability, recall
+from proofjury.memory.store import MemoryStore
 
 runner = CliRunner()
 
@@ -40,7 +40,7 @@ def _label(store, record_id, status):
 
 
 def test_class_reliability_counts_and_noisy_rule(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     for i in (1, 2, 3):
         store.append(record_factory(f"chk_00{i}", checks=[_check("lockfile_drift")]))
     _label(store, "chk_001", "false_positive")
@@ -53,7 +53,7 @@ def test_class_reliability_counts_and_noisy_rule(tmp_path, record_factory):
     }
 
     # One stray false_positive never flips a class (min threshold = 2)
-    store2 = MemoryStore(tmp_path / "other" / ".proofloop")
+    store2 = MemoryStore(tmp_path / "other" / ".proofjury")
     store2.append(record_factory("chk_001", checks=[_check("lockfile_drift")]))
     _label(store2, "chk_001", "false_positive")
     assert class_reliability(store2, "demo-repo")["lockfile_drift"]["noisy"] is False
@@ -62,7 +62,7 @@ def test_class_reliability_counts_and_noisy_rule(tmp_path, record_factory):
 def test_noisy_class_priors_demoted_below_trusted(tmp_path, record_factory):
     """Failure has classes {A, B}. The newest matching prior overlaps only
     on noisy class A → it sorts below an OLDER prior of trusted class B."""
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     # Two labeled-false_positive records make lockfile_drift noisy (these
     # two are themselves excluded from recall entirely).
     store.append(record_factory("chk_001", created_at="2026-07-01T00:00:00Z",
@@ -83,7 +83,7 @@ def test_noisy_class_priors_demoted_below_trusted(tmp_path, record_factory):
 
 
 def test_accepted_labels_rehabilitate_class(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     for i, status in enumerate(
         ("false_positive", "false_positive", "accepted", "accepted", "accepted"), start=1
     ):
@@ -104,7 +104,7 @@ def test_accepted_labels_rehabilitate_class(tmp_path, record_factory):
 def test_zero_labels_ordering_unchanged(tmp_path, record_factory):
     """Regression guard: without labels, every class is trusted and the
     ordering is the pre-weighting one (score, then recency)."""
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001", created_at="2026-07-01T00:00:00Z"))
     store.append(record_factory("chk_002", created_at="2026-07-02T00:00:00Z"))
     priors = recall(store, "demo-repo", [_failure("missing_env_var")])
@@ -112,7 +112,7 @@ def test_zero_labels_ordering_unchanged(tmp_path, record_factory):
 
 
 def test_stats_exposes_class_reliability(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001", checks=[_check("lockfile_drift")]))
     _label(store, "chk_001", "accepted")
     monkeypatch.chdir(tmp_repo.root)

@@ -1,8 +1,11 @@
 """User-level judge config store: save/load, 0600 mode, resolve precedence."""
 
 import stat
+import sys
 
-from proofloop import config
+import pytest
+
+from proofjury import config
 
 
 def _env(tmp_path, **extra):
@@ -36,6 +39,9 @@ def test_save_without_model_omits_key(tmp_path):
     assert "model" not in judge
 
 
+# POSIX permission bits only — Windows os.chmod can't express 0600, so the
+# key file falls back to the per-user profile dir's ACLs for isolation.
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode only")
 def test_file_mode_is_0600(tmp_path):
     path = config.save_judge_config("openrouter", "k", env=_env(tmp_path))
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -65,14 +71,14 @@ def test_load_malformed_returns_empty(tmp_path):
 
 def test_xdg_path_honored(tmp_path):
     env = {"XDG_CONFIG_HOME": str(tmp_path / "xdg")}
-    assert config.config_path(env) == tmp_path / "xdg" / "proofloop" / "config.toml"
+    assert config.config_path(env) == tmp_path / "xdg" / "proofjury" / "config.toml"
 
 
 def test_home_path_when_no_xdg(tmp_path):
     env = {"HOME": str(tmp_path / "home")}
     assert (
         config.config_path(env)
-        == tmp_path / "home" / ".config" / "proofloop" / "config.toml"
+        == tmp_path / "home" / ".config" / "proofjury" / "config.toml"
     )
 
 
@@ -105,7 +111,7 @@ def test_clear_nothing_returns_none(tmp_path):
 
 
 def test_resolve_no_llm_returns_none(tmp_path):
-    env = _env(tmp_path, PROOFLOOP_NO_LLM="1", OPENROUTER_API_KEY="k")
+    env = _env(tmp_path, PROOFJURY_NO_LLM="1", OPENROUTER_API_KEY="k")
     assert config.resolve_judge(env) is None
 
 
@@ -126,7 +132,7 @@ def test_resolve_autodetect_anthropic_over_openai(tmp_path):
 def test_resolve_explicit_provider_env_overrides_order(tmp_path):
     env = _env(
         tmp_path,
-        PROOFLOOP_JUDGE_PROVIDER="anthropic",
+        PROOFJURY_JUDGE_PROVIDER="anthropic",
         OPENROUTER_API_KEY="or",
         ANTHROPIC_API_KEY="an",
     )
@@ -154,7 +160,7 @@ def test_resolve_stored_config_only(tmp_path):
 
 
 def test_resolve_explicit_provider_with_stored_key(tmp_path):
-    env = _env(tmp_path, PROOFLOOP_JUDGE_PROVIDER="anthropic")
+    env = _env(tmp_path, PROOFJURY_JUDGE_PROVIDER="anthropic")
     config.save_judge_config("anthropic", "stored", env=env)
     assert config.resolve_judge(env) == {
         "provider": "anthropic",
@@ -164,7 +170,7 @@ def test_resolve_explicit_provider_with_stored_key(tmp_path):
 
 
 def test_resolve_model_env_beats_config(tmp_path):
-    env = _env(tmp_path, OPENROUTER_API_KEY="k", PROOFLOOP_JUDGE_MODEL="env/model")
+    env = _env(tmp_path, OPENROUTER_API_KEY="k", PROOFJURY_JUDGE_MODEL="env/model")
     config.save_judge_config("openrouter", "x", model="file/model", env=env)
     assert config.resolve_judge(env)["model"] == "env/model"
 
@@ -178,4 +184,4 @@ def test_llm_configured(tmp_path):
     assert config.llm_configured(env) is False
     config.save_judge_config("openai", "k", env=env)
     assert config.llm_configured(env) is True
-    assert config.llm_configured(_env(tmp_path, PROOFLOOP_NO_LLM="1")) is False
+    assert config.llm_configured(_env(tmp_path, PROOFJURY_NO_LLM="1")) is False

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Proofloop §3 acceptance demo — idempotent (fresh mktemp workdir each run).
+# Proofjury §3 acceptance demo — idempotent (fresh mktemp workdir each run).
 #
 #   1. Guard blocks the unready deploy (exit 2, command never spawned) —
 #      ALL SIX advertised failure classes fire.
 #   2. Fix: point config at prod, remove the hardcoded secret, set env vars,
-#      run tests/build/lint through proofloop.
-#      (ALL file edits happen BEFORE the proofloop run stamps — any edit
+#      run tests/build/lint through proofjury.
+#      (ALL file edits happen BEFORE the proofjury run stamps — any edit
 #       after stamping re-arms stale_digest and step 3 would block.)
 #   3. Guard passes; the stand-in deploy executes (exit 0); the passing
 #      record auto-resolves the blocked one.
@@ -14,19 +14,25 @@
 #   5. LLM leg: fresh workdir + mock OpenRouter server → the judge writes
 #      the diagnosis, the ledger records the cost. The exit code is 2 with
 #      or without the LLM — deterministic checks decide, the LLM explains.
+#      The fresh repo also recalls the app repo's prior block cross-repo
+#      (recalled_from = app:chk_NNN) via the user-level store registry.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if ! command -v proofloop >/dev/null 2>&1; then
+if ! command -v proofjury >/dev/null 2>&1; then
   export PATH="$ROOT/.venv/bin:$PATH"
 fi
-command -v proofloop >/dev/null 2>&1 || { echo "proofloop not on PATH (pip install -e 'cli[dev]' into .venv first)"; exit 1; }
+command -v proofjury >/dev/null 2>&1 || { echo "proofjury not on PATH (pip install -e 'cli[dev]' into .venv first)"; exit 1; }
 
 # Deterministic, offline demo: steps 1-4 never call a real LLM. Step 5
 # un-sets this for its own guard call (its "network" is a 127.0.0.1 mock).
-export PROOFLOOP_NO_LLM=1
+export PROOFJURY_NO_LLM=1
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/proofloop-demo.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/proofjury-demo.XXXXXX")"
+# Isolated config home for the WHOLE demo: gates register their store in a
+# user-level registry (cross-repo memory recall) and step 5 runs `login` —
+# neither may ever touch the developer's real ~/.config/proofjury.
+export XDG_CONFIG_HOME="$WORK/xdg"
 APP="$WORK/app"
 cp -R "$ROOT/demo-app" "$APP"
 cd "$APP"
@@ -39,21 +45,21 @@ fail()   { echo "ASSERTION FAILED: $*" >&2; exit 1; }
 rec() {
   python3 - "$1" "$2" <<'PY'
 import json, sys
-records = [json.loads(l) for l in open(".proofloop/memory.jsonl") if l.strip()]
+records = [json.loads(l) for l in open(".proofjury/memory.jsonl") if l.strip()]
 r = records[int(sys.argv[1])]
 print(json.dumps(eval(sys.argv[2], {"r": r})))
 PY
 }
 record_count() {
-  python3 -c 'import sys; print(sum(1 for l in open(".proofloop/memory.jsonl") if l.strip()))'
+  python3 -c 'import sys; print(sum(1 for l in open(".proofjury/memory.jsonl") if l.strip()))'
 }
 
 # ---------------------------------------------------------------------------
 banner "STEP 1 — deploy through the gate with nothing ready → BLOCKED"
-echo "\$ proofloop guard deploy -- ./deploy.sh"
+echo "\$ proofjury guard deploy -- ./deploy.sh"
 rc=0
 env -u STRIPE_API_KEY -u DATABASE_URL -u WEBHOOK_SIGNING_SECRET \
-  proofloop guard deploy -- ./deploy.sh \
+  proofjury guard deploy -- ./deploy.sh \
   >"$WORK/step1.out" 2>&1 || rc=$?
 cat "$WORK/step1.out"
 [ "$rc" -eq 2 ] || fail "step 1: expected exit 2 (BLOCKED), got $rc"
@@ -106,18 +112,18 @@ export DATABASE_URL=postgres://demo
 export WEBHOOK_SIGNING_SECRET=1c2d3e4f5a6b7089  # ≥8 chars → scrub coverage applies
 echo "\$ export STRIPE_API_KEY=... DATABASE_URL=... WEBHOOK_SIGNING_SECRET=..."
 # Stamps come LAST — after every file edit — or stale_digest re-arms.
-echo "\$ proofloop run tests -- python3 -m pytest -q"
-proofloop run tests -- python3 -m pytest -q
-echo "\$ proofloop run build -- python3 -m compileall -q ."
-proofloop run build -- python3 -m compileall -q .
-echo "\$ proofloop run lint -- python3 -m compileall -q app.py"
-proofloop run lint -- python3 -m compileall -q app.py
+echo "\$ proofjury run tests -- python3 -m pytest -q"
+proofjury run tests -- python3 -m pytest -q
+echo "\$ proofjury run build -- python3 -m compileall -q ."
+proofjury run build -- python3 -m compileall -q .
+echo "\$ proofjury run lint -- python3 -m compileall -q app.py"
+proofjury run lint -- python3 -m compileall -q app.py
 
 # ---------------------------------------------------------------------------
 banner "STEP 3 — deploy again → GATE PASSES, stand-in deploy executes"
-echo "\$ proofloop guard deploy -- ./deploy.sh"
+echo "\$ proofjury guard deploy -- ./deploy.sh"
 rc=0
-proofloop guard deploy -- ./deploy.sh >"$WORK/step3.out" 2>&1 || rc=$?
+proofjury guard deploy -- ./deploy.sh >"$WORK/step3.out" 2>&1 || rc=$?
 cat "$WORK/step3.out"
 [ "$rc" -eq 0 ] || fail "step 3: expected exit 0, got $rc"
 grep -q "Deployed (stand-in)" "$WORK/step3.out" || fail "step 3: stand-in deploy did not run"
@@ -130,9 +136,9 @@ echo "→ gate passed, deploy executed, record chk_002 resolves $RID1 ✔"
 
 # ---------------------------------------------------------------------------
 banner "STEP 4 — recurrence: STRIPE_API_KEY lost again → BLOCKED + RECALLED"
-echo "\$ proofloop guard deploy -- ./deploy.sh   (STRIPE_API_KEY unset)"
+echo "\$ proofjury guard deploy -- ./deploy.sh   (STRIPE_API_KEY unset)"
 rc=0
-env -u STRIPE_API_KEY proofloop guard deploy -- ./deploy.sh \
+env -u STRIPE_API_KEY proofjury guard deploy -- ./deploy.sh \
   >"$WORK/step4.out" 2>&1 || rc=$?
 cat "$WORK/step4.out"
 [ "$rc" -eq 2 ] || fail "step 4: expected exit 2 (BLOCKED), got $rc"
@@ -154,25 +160,33 @@ trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 for _ in $(seq 50); do [ -s "$WORK/mock.port" ] && break; sleep 0.1; done
 [ -s "$WORK/mock.port" ] || fail "step 5: mock server never reported a port"
 PORT="$(cat "$WORK/mock.port")"
-# Isolated config home: login must never touch ~/.config/proofloop.
-export XDG_CONFIG_HOME="$WORK/xdg"
-echo "\$ proofloop login --provider openrouter --api-key demo-key --no-verify"
-proofloop login --provider openrouter --api-key demo-key --no-verify
-echo "\$ proofloop guard deploy -- ./deploy.sh   (LLM judge via mock server)"
+echo "\$ proofjury login --provider openrouter --api-key demo-key --no-verify"
+proofjury login --provider openrouter --api-key demo-key --no-verify
+echo "\$ proofjury guard deploy -- ./deploy.sh   (LLM judge via mock server)"
 rc=0
-env -u PROOFLOOP_NO_LLM -u STRIPE_API_KEY -u DATABASE_URL -u WEBHOOK_SIGNING_SECRET \
-  PROOFLOOP_OPENROUTER_URL="http://127.0.0.1:$PORT/chat/completions" \
-  proofloop guard deploy -- ./deploy.sh >"$WORK/step5.out" 2>&1 || rc=$?
+env -u PROOFJURY_NO_LLM -u STRIPE_API_KEY -u DATABASE_URL -u WEBHOOK_SIGNING_SECRET \
+  PROOFJURY_OPENROUTER_URL="http://127.0.0.1:$PORT/chat/completions" \
+  proofjury guard deploy -- ./deploy.sh >"$WORK/step5.out" 2>&1 || rc=$?
 cat "$WORK/step5.out"
 [ "$rc" -eq 2 ] || fail "step 5: expected exit 2 (BLOCKED with or without LLM), got $rc"
 [ "$(rec 0 'r["judge_model_id"]' | tr -d '"')" = "openai/gpt-4o-mini" ] \
   || fail "step 5: judge_model_id must be the mock LLM's, got $(rec 0 'r["judge_model_id"]')"
 python3 - <<'PY' || fail "step 5: ledger cost"
 import json
-entries = [json.loads(l) for l in open(".proofloop/ledger.jsonl") if l.strip()]
+entries = [json.loads(l) for l in open(".proofjury/ledger.jsonl") if l.strip()]
 assert len(entries) == 1 and entries[0]["cost_usd"] == 0.00042, entries
 PY
-echo "→ LLM judge explained the block via the mock server, cost hit the ledger ✔"
+# Cross-repo memory recall: app-llm has no priors of its own, but the same
+# failure was blocked in the app repo earlier in this demo — the record
+# must cite it as <repo_id>:<chk_id>. Foreign priors never short-circuit
+# the judge, which is why the mock LLM assertion above still held.
+RECALLED5="$(rec 0 'r["recalled_from"]' | tr -d '"')"
+case "$RECALLED5" in
+  app:chk_*) ;;
+  *) fail "step 5: expected cross-repo recalled_from app:chk_NNN, got '$RECALLED5'" ;;
+esac
+echo "→ LLM judge explained the block via the mock server, cost hit the ledger,"
+echo "  and the failure was recalled cross-repo from $RECALLED5 ✔"
 
 # ---------------------------------------------------------------------------
 banner "DEMO PASSED"

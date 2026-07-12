@@ -10,9 +10,9 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from proofloop.cli import app
-from proofloop.envfile import parse_env_file
-from proofloop.gate import run_gate
+from proofjury.cli import app
+from proofjury.envfile import parse_env_file
+from proofjury.gate import run_gate
 
 runner = CliRunner()
 
@@ -100,7 +100,7 @@ def test_env_file_values_scrubbed(tmp_repo, scrubbed_env):
         deploy_env=parse_env_file(env_file),
         render=False,
     )
-    proof_root = tmp_repo.root / ".proofloop"
+    proof_root = tmp_repo.root / ".proofjury"
     for path in proof_root.rglob("*"):
         if path.is_file():
             assert secret not in path.read_text(errors="ignore"), path
@@ -146,10 +146,10 @@ def test_guard_env_file_cli_blocks_on_missing_var(tmp_repo, monkeypatch):
 
 
 def test_toml_env_file_used_by_hook(tmp_repo, scrubbed_env):
-    from proofloop.hooks import handle_hook
+    from proofjury.hooks import handle_hook
 
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
-    tmp_repo.write(".proofloop.toml", '[env]\nfile = ".env.production"\n')
+    tmp_repo.write(".proofjury.toml", '[env]\nfile = ".env.production"\n')
     tmp_repo.write(".env.production", "OTHER_VAR=present\n")
     hook_env = {**scrubbed_env, "STRIPE_API_KEY": "sk_live_1234567890abcdef"}
     payload = {"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}
@@ -162,7 +162,7 @@ def test_toml_env_file_used_by_hook(tmp_repo, scrubbed_env):
 def test_toml_env_file_unreadable_fails_closed(tmp_repo, monkeypatch):
     """A configured-but-unreadable [env].file must DENY (exit 2), never
     silently fall back to os.environ."""
-    tmp_repo.write(".proofloop.toml", '[env]\nfile = ".env.production"\n')  # not created
+    tmp_repo.write(".proofjury.toml", '[env]\nfile = ".env.production"\n')  # not created
     monkeypatch.chdir(tmp_repo.root)
     payload = json.dumps(
         {"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}

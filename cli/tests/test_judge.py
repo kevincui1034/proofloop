@@ -5,9 +5,9 @@ import json
 import httpx
 import pytest
 
-from proofloop import config
-from proofloop.checks.base import CheckResult, Evidence
-from proofloop.judge import (
+from proofjury import config
+from proofjury.checks.base import CheckResult, Evidence
+from proofjury.judge import (
     AnthropicJudge,
     DeterministicJudge,
     JudgeInput,
@@ -16,7 +16,7 @@ from proofloop.judge import (
     OpenRouterJudge,
     get_judge,
 )
-from proofloop.judge.deterministic import MODEL_ID as DETERMINISTIC_MODEL_ID
+from proofjury.judge.deterministic import MODEL_ID as DETERMINISTIC_MODEL_ID
 
 
 def _env_failure() -> CheckResult:
@@ -40,12 +40,12 @@ def _tests_failure() -> CheckResult:
         failure_class="tests_not_run",
         evidence=[
             Evidence(
-                file=".proofloop/session.json",
+                file=".proofjury/session.json",
                 line=1,
                 detail="no test run recorded for this worktree",
             )
         ],
-        fix_hint="Run: proofloop run tests -- pytest",
+        fix_hint="Run: proofjury run tests -- pytest",
     )
 
 
@@ -70,7 +70,7 @@ def test_deterministic_diagnosis_cites_vars_and_lines():
     assert "the first request will crash" in output.diagnosis
     assert "Tests have not run against this worktree" in output.diagnosis
     assert any("export STRIPE_API_KEY" in step for step in output.fix_steps)
-    assert any("proofloop run tests" in step for step in output.fix_steps)
+    assert any("proofjury run tests" in step for step in output.fix_steps)
 
 
 def test_deterministic_severity_orders_env_first():
@@ -129,7 +129,7 @@ def test_openrouter_success_parses_and_writes_ledger(tmp_path):
         api_key="test-key",
         model="openai/gpt-4o-mini",
         transport=httpx.MockTransport(handler),
-        root=tmp_path / ".proofloop",
+        root=tmp_path / ".proofjury",
     )
     output = judge.diagnose(_judge_input())
     assert output.diagnosis == "LLM diagnosis"
@@ -138,7 +138,7 @@ def test_openrouter_success_parses_and_writes_ledger(tmp_path):
     assert output.cost_usd == 0.00042
     assert seen["auth"] == "Bearer test-key"
     assert "STRIPE_API_KEY (payments.py:14)" in seen["body"]["messages"][1]["content"]
-    ledger_lines = (tmp_path / ".proofloop" / "ledger.jsonl").read_text().splitlines()
+    ledger_lines = (tmp_path / ".proofjury" / "ledger.jsonl").read_text().splitlines()
     entry = json.loads(ledger_lines[0])
     assert entry["model"] == "openai/gpt-4o-mini"
     assert entry["cost_usd"] == 0.00042
@@ -168,7 +168,7 @@ def test_openrouter_error_falls_back_to_deterministic(tmp_path):
         api_key="k",
         transport=httpx.MockTransport(handler),
         fallback=DeterministicJudge(),
-        root=tmp_path / ".proofloop",
+        root=tmp_path / ".proofjury",
     )
     output = judge.diagnose(_judge_input())
     assert output.model_id == DETERMINISTIC_MODEL_ID
@@ -192,7 +192,7 @@ def test_factory_selects_openrouter_when_key_present(tmp_path):
 
 def test_factory_honors_model_override(tmp_path):
     judge = get_judge(
-        {"OPENROUTER_API_KEY": "k", "PROOFLOOP_JUDGE_MODEL": "meta/cheap-model"},
+        {"OPENROUTER_API_KEY": "k", "PROOFJURY_JUDGE_MODEL": "meta/cheap-model"},
         root=tmp_path,
     )
     assert judge.model == "meta/cheap-model"
@@ -203,7 +203,7 @@ def test_factory_deterministic_without_key():
 
 
 def test_factory_deterministic_with_no_llm_flag():
-    judge = get_judge({"OPENROUTER_API_KEY": "k", "PROOFLOOP_NO_LLM": "1"})
+    judge = get_judge({"OPENROUTER_API_KEY": "k", "PROOFJURY_NO_LLM": "1"})
     assert isinstance(judge, DeterministicJudge)
 
 
@@ -248,7 +248,7 @@ def test_anthropic_success_parses_and_writes_ledger(tmp_path):
     judge = AnthropicJudge(
         api_key="sk-ant-key",
         transport=httpx.MockTransport(handler),
-        root=tmp_path / ".proofloop",
+        root=tmp_path / ".proofjury",
     )
     output = judge.diagnose(_judge_input())
     assert output.diagnosis == "Claude diagnosis"
@@ -262,13 +262,13 @@ def test_anthropic_success_parses_and_writes_ledger(tmp_path):
     assert seen["x_api_key"] == "sk-ant-key"
     assert seen["version"] == "2023-06-01"
     assert seen["body"]["max_tokens"] == 700
-    assert seen["body"]["system"].startswith("You are Proofloop's deploy-readiness judge")
+    assert seen["body"]["system"].startswith("You are Proofjury's deploy-readiness judge")
     # system is a top-level field, never a message role
     assert [m["role"] for m in seen["body"]["messages"]] == ["user"]
     assert "STRIPE_API_KEY (payments.py:14)" in seen["body"]["messages"][0]["content"]
     # ledger: computed non-zero cost
     ledger = json.loads(
-        (tmp_path / ".proofloop" / "ledger.jsonl").read_text().splitlines()[0]
+        (tmp_path / ".proofjury" / "ledger.jsonl").read_text().splitlines()[0]
     )
     assert ledger["model"] == "claude-haiku-4-5"
     assert ledger["cost_usd"] == pytest.approx(0.002)
@@ -293,7 +293,7 @@ def test_anthropic_unknown_model_costs_zero(tmp_path):
         api_key="k",
         model="claude-experimental",
         transport=httpx.MockTransport(handler),
-        root=tmp_path / ".proofloop",
+        root=tmp_path / ".proofjury",
     )
     output = judge.diagnose(_judge_input())
     assert output.cost_usd == 0.0  # unknown model → 0.0
@@ -308,12 +308,12 @@ def test_anthropic_error_falls_back_to_deterministic(tmp_path):
     judge = AnthropicJudge(
         api_key="k",
         transport=httpx.MockTransport(handler),
-        root=tmp_path / ".proofloop",
+        root=tmp_path / ".proofjury",
     )
     output = judge.diagnose(_judge_input())
     assert output.model_id == DETERMINISTIC_MODEL_ID
     assert "STRIPE_API_KEY" in output.diagnosis
-    assert not (tmp_path / ".proofloop" / "ledger.jsonl").exists()
+    assert not (tmp_path / ".proofjury" / "ledger.jsonl").exists()
 
 
 # --------------------------------------------------------------------------
@@ -348,7 +348,7 @@ def test_openai_success_parses_and_writes_ledger(tmp_path):
     judge = OpenAIJudge(
         api_key="sk-openai",
         transport=httpx.MockTransport(handler),
-        root=tmp_path / ".proofloop",
+        root=tmp_path / ".proofjury",
     )
     output = judge.diagnose(_judge_input())
     assert output.diagnosis == "OpenAI diagnosis"
@@ -364,7 +364,7 @@ def test_openai_success_parses_and_writes_ledger(tmp_path):
     assert seen["body"]["messages"][0]["role"] == "system"
     assert "STRIPE_API_KEY (payments.py:14)" in seen["body"]["messages"][1]["content"]
     ledger = json.loads(
-        (tmp_path / ".proofloop" / "ledger.jsonl").read_text().splitlines()[0]
+        (tmp_path / ".proofjury" / "ledger.jsonl").read_text().splitlines()[0]
     )
     assert ledger["model"] == "gpt-4o-mini"
     assert ledger["cost_usd"] == pytest.approx(0.00045)
@@ -381,11 +381,11 @@ def test_openai_error_falls_back_to_deterministic(tmp_path):
     judge = OpenAIJudge(
         api_key="k",
         transport=httpx.MockTransport(handler),
-        root=tmp_path / ".proofloop",
+        root=tmp_path / ".proofjury",
     )
     output = judge.diagnose(_judge_input())
     assert output.model_id == DETERMINISTIC_MODEL_ID
-    assert not (tmp_path / ".proofloop" / "ledger.jsonl").exists()
+    assert not (tmp_path / ".proofjury" / "ledger.jsonl").exists()
 
 
 # --------------------------------------------------------------------------
@@ -408,7 +408,7 @@ def test_factory_selects_openai_from_env(tmp_path):
 def test_factory_explicit_provider_plus_config_key(tmp_path):
     env = {
         "XDG_CONFIG_HOME": str(tmp_path / "cfg"),
-        "PROOFLOOP_JUDGE_PROVIDER": "anthropic",
+        "PROOFJURY_JUDGE_PROVIDER": "anthropic",
     }
     config.save_judge_config("anthropic", "stored-ant-key", env=env)
     judge = get_judge(env, root=tmp_path)
@@ -425,18 +425,18 @@ def test_factory_stored_config_only_selects_adapter(tmp_path):
 
 
 def test_factory_no_llm_flag_beats_stored_config(tmp_path):
-    env = {"XDG_CONFIG_HOME": str(tmp_path / "cfg"), "PROOFLOOP_NO_LLM": "1"}
+    env = {"XDG_CONFIG_HOME": str(tmp_path / "cfg"), "PROOFJURY_NO_LLM": "1"}
     config.save_judge_config("anthropic", "k", env=env)
     assert isinstance(get_judge(env), DeterministicJudge)
 
 
 def test_openrouter_endpoint_env_override(monkeypatch):
-    from proofloop.judge.openrouter import OPENROUTER_URL
+    from proofjury.judge.openrouter import OPENROUTER_URL
 
-    monkeypatch.setenv("PROOFLOOP_OPENROUTER_URL", "http://127.0.0.1:9999/chat/completions")
+    monkeypatch.setenv("PROOFJURY_OPENROUTER_URL", "http://127.0.0.1:9999/chat/completions")
     judge = OpenRouterJudge(api_key="k")
     assert judge.endpoint == "http://127.0.0.1:9999/chat/completions"
 
-    monkeypatch.delenv("PROOFLOOP_OPENROUTER_URL")
+    monkeypatch.delenv("PROOFJURY_OPENROUTER_URL")
     judge = OpenRouterJudge(api_key="k")
     assert judge.endpoint == OPENROUTER_URL  # unset env → class default

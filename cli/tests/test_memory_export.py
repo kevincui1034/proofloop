@@ -4,19 +4,19 @@ import json
 
 from typer.testing import CliRunner
 
-from proofloop.cli import app
-from proofloop.gate import run_gate
-from proofloop.judge import JudgeOutput
-from proofloop.judge.mock import MockJudge
-from proofloop.memory.export import export_rows, read_ledger, row_label, stats
-from proofloop.memory.recall import recall
-from proofloop.memory.store import MemoryStore
+from proofjury.cli import app
+from proofjury.gate import run_gate
+from proofjury.judge import JudgeOutput
+from proofjury.judge.mock import MockJudge
+from proofjury.memory.export import export_rows, read_ledger, row_label, stats
+from proofjury.memory.recall import recall
+from proofjury.memory.store import MemoryStore
 
 runner = CliRunner()
 
 
 def _failure():
-    from proofloop.checks.base import CheckResult, Evidence
+    from proofjury.checks.base import CheckResult, Evidence
 
     return CheckResult(
         name="env_vars",
@@ -30,7 +30,7 @@ def _failure():
 
 
 def test_false_positive_prior_excluded_from_recall(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001"))
     store.update_resolution(
         "chk_001", {"status": "false_positive", "note": "CI env", "at": "t1"}
@@ -40,7 +40,7 @@ def test_false_positive_prior_excluded_from_recall(tmp_path, record_factory):
 
 def test_overridden_prior_still_recalled(tmp_path, record_factory):
     """A --force'd failure is still a true failure — it must stay recallable."""
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001"))
     for status in ("overridden", "accepted", "auto_resolved", "confirmed"):
         store.update_resolution("chk_001", {"status": status, "at": "t"})
@@ -58,7 +58,7 @@ def test_false_positive_prior_does_not_short_circuit_judge(tmp_repo, scrubbed_en
     )
     assert first.blocked and first.record.recalled_from is None
 
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.update_resolution(
         first.record.id, {"status": "false_positive", "note": None, "at": "t1"}
     )
@@ -102,7 +102,7 @@ def test_row_label_derivation():
 
 
 def test_export_labels(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001"))
     store.append(record_factory("chk_002"))
     store.update_resolution("chk_002", {"status": "accepted", "at": "t1"})
@@ -121,7 +121,7 @@ def test_export_labels(tmp_path, record_factory):
 
 
 def test_export_dedupe_by_inputs_hash(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001", inputs_hash="aaa"))
     store.append(record_factory("chk_002", inputs_hash="aaa"))
     store.append(record_factory("chk_003", inputs_hash="bbb"))
@@ -133,7 +133,7 @@ def test_export_dedupe_by_inputs_hash(tmp_path, record_factory):
 
 
 def test_export_cli_jsonl(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001"))
     store.append(record_factory("chk_002"))
     monkeypatch.chdir(tmp_repo.root)
@@ -153,7 +153,7 @@ def test_export_cli_empty_store(tmp_repo, monkeypatch):
 
 
 def test_export_cli_to_file(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001"))
     monkeypatch.chdir(tmp_repo.root)
     out = tmp_repo.root / "dataset.jsonl"
@@ -166,10 +166,10 @@ def test_export_cli_to_file(tmp_repo, record_factory, monkeypatch):
 
 
 def test_stats_aggregates_ledger(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001", gate_duration_ms=100))
     store.append(record_factory("chk_002", gate_passed=True, checks=[], gate_duration_ms=300))
-    (tmp_repo.root / ".proofloop" / "ledger.jsonl").write_text(
+    (tmp_repo.root / ".proofjury" / "ledger.jsonl").write_text(
         json.dumps({"ts": "t1", "model": "m1", "cost_usd": 0.0012}) + "\n"
         + "not json\n"  # malformed lines are skipped, never raise
         + json.dumps({"ts": "t2", "model": "m2", "cost_usd": 0.0034}) + "\n"
@@ -205,13 +205,13 @@ def test_stats_empty_store_ok(tmp_repo, monkeypatch):
 
 
 def test_stats_rates(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001"))
     store.append(record_factory("chk_002", recalled_from="chk_001"))
     store.append(
         record_factory("chk_003", gate_passed=True, checks=[], resolves="chk_002")
     )
-    data = stats(store, tmp_path / ".proofloop" / "ledger.jsonl")
+    data = stats(store, tmp_path / ".proofjury" / "ledger.jsonl")
     assert data["recall_hit_rate"] == 0.5
     assert data["auto_resolve_rate"] == 1.0
 

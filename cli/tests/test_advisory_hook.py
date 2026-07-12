@@ -8,17 +8,17 @@ emits an approval.
 
 import pytest
 
-import proofloop.gate as gate_module
-from proofloop.hooks import (
+import proofjury.gate as gate_module
+from proofjury.hooks import (
     ADVISORY_CONTEXT_HEADER,
     FINAL_INSTRUCTION,
     handle_cursor_hook,
     handle_hook,
 )
-from proofloop.judge.advisory import AdvisoryFinding
-from proofloop.judge.advisory_mock import MockAdvisoryJudge
-from proofloop.memory.store import MemoryStore
-from proofloop.session import stamp
+from proofjury.judge.advisory import AdvisoryFinding
+from proofjury.judge.advisory_mock import MockAdvisoryJudge
+from proofjury.memory.store import MemoryStore
+from proofjury.session import stamp
 
 NO_DECISION: dict = {}
 
@@ -26,7 +26,7 @@ DEPLOY = {"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}
 
 
 def _store(root):
-    return MemoryStore(root / ".proofloop")
+    return MemoryStore(root / ".proofjury")
 
 
 def _finding(concern="the webhook send has no retry", confidence=0.9):

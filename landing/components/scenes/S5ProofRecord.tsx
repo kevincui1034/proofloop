@@ -231,7 +231,7 @@ export default function S5ProofRecord() {
             <p className="mt-4 max-w-[52ch] leading-relaxed">
               Each interception is persisted to{" "}
               <code className="font-mono text-sm text-ink">
-                .proofloop/runs/
+                .proofjury/runs/
               </code>{" "}
               — the trace, the env scan, the build log.
             </p>

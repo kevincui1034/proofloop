@@ -4,11 +4,11 @@
 // evidence mirrors the real acceptance-demo transcripts in
 // lib/terminal-scripts.ts (the content source of record).
 
-export const COMMAND = "proofloop guard deploy -- ./deploy.sh";
+export const COMMAND = "proofjury guard deploy -- ./deploy.sh";
 
 export const HERO = {
   title: "The last command before production.",
-  sub: "Proofloop is the correctness gate for AI-written code. It catches what your agent got wrong before it ships, proves why, and remembers.",
+  sub: "Proofjury is the correctness gate for AI-written code. It catches what your agent got wrong before it ships, proves why, and remembers.",
   hint: "scroll — the deploy is already moving",
 };
 
@@ -70,7 +70,7 @@ export const GATE_CHECKS: GateCheck[] = [
 ];
 
 export const RECORD_LINE =
-  "record chk_001 → .proofloop/memory.jsonl · proof: .proofloop/runs/chk_001/ · exit 2";
+  "record chk_001 → .proofjury/memory.jsonl · proof: .proofjury/runs/chk_001/ · exit 2";
 
 export type ReceiptRow = {
   name: string;
@@ -100,9 +100,9 @@ export type TranscriptLine = {
 // applied, tests actually run, and the same gate passes.
 export const FIX_TRANSCRIPT: TranscriptLine[] = [
   { kind: "cmd", text: "export STRIPE_API_KEY=••••• DATABASE_URL=•••••" },
-  { kind: "cmd", text: "proofloop run tests -- pytest -q" },
+  { kind: "cmd", text: "proofjury run tests -- pytest -q" },
   { kind: "out", text: "4 passed in 0.01s", tone: "green" },
-  { kind: "cmd", text: "proofloop guard deploy -- ./deploy.sh" },
+  { kind: "cmd", text: "proofjury guard deploy -- ./deploy.sh" },
   { kind: "status", text: "✅ GATE PASSED — executing: ./deploy.sh", tone: "green" },
   { kind: "out", text: "✦ Resolves chk_001 — the failure diagnosed there is now fixed.", tone: "amber" },
 ];

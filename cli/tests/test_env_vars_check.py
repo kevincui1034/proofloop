@@ -1,6 +1,6 @@
 """missing_env_var: AST variants, JS regex, file:line exactness, fallback."""
 
-from proofloop.checks.env_vars import check_env_vars
+from proofjury.checks.env_vars import check_env_vars
 
 
 def _failed_names(result):

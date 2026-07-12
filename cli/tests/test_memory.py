@@ -6,11 +6,11 @@ import sys
 
 from typer.testing import CliRunner
 
-from proofloop.checks.base import CheckResult, Evidence
-from proofloop.cli import app
-from proofloop.memory.recall import recall
-from proofloop.memory.schema import CHECK_ENTRY_KEYS, MemoryRecord
-from proofloop.memory.store import MemoryStore
+from proofjury.checks.base import CheckResult, Evidence
+from proofjury.cli import app
+from proofjury.memory.recall import recall
+from proofjury.memory.schema import CHECK_ENTRY_KEYS, MemoryRecord
+from proofjury.memory.store import MemoryStore
 
 runner = CliRunner()
 
@@ -85,7 +85,7 @@ def test_advisory_fields_default_empty_and_roundtrip(tmp_path, record_factory):
         "label": None,
         "retraction": None,
     }
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_009", advisories=[entry], task_ref="add retries"))
     loaded = store.get("chk_009")
     assert loaded.advisories == [entry]
@@ -93,7 +93,7 @@ def test_advisory_fields_default_empty_and_roundtrip(tmp_path, record_factory):
 
 
 def test_roundtrip_append_get_iter(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     rec1 = record_factory("chk_001")
     rec2 = record_factory("chk_002", gate_passed=True)
     store.append(rec1)
@@ -106,14 +106,14 @@ def test_roundtrip_append_get_iter(tmp_path, record_factory):
 
 
 def test_next_id_counter(tmp_path):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     assert store.next_id() == "chk_001"
     assert store.next_id() == "chk_002"
     assert store.next_id() == "chk_003"
 
 
 def test_next_id_claims_runs_dir_atomically(tmp_path):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     assert store.next_id() == "chk_001"
     assert (store.root / "runs" / "chk_001").is_dir()
     # a pre-existing runs dir is never reused — the id bumps past it
@@ -122,7 +122,7 @@ def test_next_id_claims_runs_dir_atomically(tmp_path):
 
 
 def test_next_id_never_regresses_below_existing(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_041"))
     (store.root / "runs" / "chk_007").mkdir(parents=True)
     store.counter_path.write_text("2")  # counter regressed / tampered
@@ -132,11 +132,11 @@ def test_next_id_never_regresses_below_existing(tmp_path, record_factory):
 def test_next_id_concurrent_processes_all_unique(tmp_path):
     """~8 concurrent processes allocating ids: all unique, contiguous,
     and the counter lands past the max (regression: unlocked RMW)."""
-    root = tmp_path / ".proofloop"
+    root = tmp_path / ".proofjury"
     script = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from proofloop.memory.store import MemoryStore\n"
+        "from proofjury.memory.store import MemoryStore\n"
         "store = MemoryStore(Path(sys.argv[1]))\n"
         "ids = [store.next_id() for _ in range(6)]\n"
         "Path(sys.argv[2]).write_text('\\n'.join(ids))\n"
@@ -163,14 +163,14 @@ def test_next_id_concurrent_processes_all_unique(tmp_path):
 def test_concurrent_append_and_update_resolution_no_record_loss(tmp_path, record_factory):
     """update_resolution's rewrite must not clobber concurrent appends
     (regression: a prior probe lost ~127/301 records)."""
-    root = tmp_path / ".proofloop"
+    root = tmp_path / ".proofjury"
     store = MemoryStore(root)
     store.append(record_factory("chk_900"))
     append_script = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from proofloop.memory.store import MemoryStore\n"
-        "from proofloop.memory.schema import MemoryRecord\n"
+        "from proofjury.memory.store import MemoryStore\n"
+        "from proofjury.memory.schema import MemoryRecord\n"
         "store = MemoryStore(Path(sys.argv[1]))\n"
         "base = int(sys.argv[2])\n"
         "for j in range(25):\n"
@@ -185,7 +185,7 @@ def test_concurrent_append_and_update_resolution_no_record_loss(tmp_path, record
     update_script = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from proofloop.memory.store import MemoryStore\n"
+        "from proofjury.memory.store import MemoryStore\n"
         "store = MemoryStore(Path(sys.argv[1]))\n"
         "for j in range(40):\n"
         "    store.update_resolution('chk_900', {'status': 'accepted', 'note': str(j)})\n"
@@ -207,7 +207,7 @@ def test_concurrent_append_and_update_resolution_no_record_loss(tmp_path, record
 
 
 def test_append_after_crash_truncated_final_line(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001"))
     # Simulate a crash mid-write: the final line loses its trailing bytes.
     data = store.jsonl_path.read_bytes()
@@ -221,7 +221,7 @@ def test_append_after_crash_truncated_final_line(tmp_path, record_factory):
 
 
 def test_update_resolution_atomic_rewrite(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     for i in (1, 2, 3):
         store.append(record_factory(f"chk_00{i}"))
     ok = store.update_resolution("chk_002", {"status": "accepted", "note": "yes"})
@@ -234,10 +234,10 @@ def test_update_resolution_atomic_rewrite(tmp_path, record_factory):
 
 
 def test_markdown_appended(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append_markdown(record_factory("chk_001"))
-    text = (tmp_path / ".proofloop" / "memory.md").read_text()
-    assert "# Proofloop memory" in text
+    text = (tmp_path / ".proofjury" / "memory.md").read_text()
+    assert "# Proofjury memory" in text
     assert "chk_001" in text
     assert "BLOCKED" in text
 
@@ -253,7 +253,7 @@ def _failure(evidence_name: str, file: str = "payments.py", line: int = 14) -> C
 
 
 def test_recall_ranks_shared_env_tokens_over_recency(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     match = record_factory("chk_001", created_at="2026-07-01T00:00:00Z")
     unrelated = record_factory(
         "chk_002",
@@ -278,7 +278,7 @@ def test_recall_env_var_match_beats_shared_boilerplate(tmp_path, record_factory)
     """Generic English tokens are ignored: a prior sharing only the
     session-marker boilerplate must not outrank the prior sharing the
     exact env var name (even when the boilerplate one is newer)."""
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     env_match = record_factory("chk_001", created_at="2026-07-01T00:00:00Z")
     boilerplate_only = record_factory(
         "chk_002",
@@ -303,7 +303,7 @@ def test_recall_env_var_match_beats_shared_boilerplate(tmp_path, record_factory)
             failure_class="tests_not_run",
             evidence=[
                 Evidence(
-                    file=".proofloop/session.json",
+                    file=".proofjury/session.json",
                     line=1,
                     detail="no test run recorded for this worktree",
                 )
@@ -315,7 +315,7 @@ def test_recall_env_var_match_beats_shared_boilerplate(tmp_path, record_factory)
 
 
 def test_recall_prefers_recency_on_ties(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001", created_at="2026-07-01T00:00:00Z"))
     store.append(record_factory("chk_002", created_at="2026-07-03T00:00:00Z"))
     ranked = recall(store, "demo-repo", [_failure("STRIPE_API_KEY")])
@@ -323,7 +323,7 @@ def test_recall_prefers_recency_on_ties(tmp_path, record_factory):
 
 
 def test_recall_filters_repo_class_and_passed(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001", repo_id="other-repo"))
     store.append(record_factory("chk_002", gate_passed=True))
     store.append(
@@ -344,7 +344,7 @@ def test_recall_filters_repo_class_and_passed(tmp_path, record_factory):
 
 
 def test_resolve_cli_updates_record(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001"))
     monkeypatch.chdir(tmp_repo.root)
     result = runner.invoke(
@@ -363,7 +363,7 @@ def test_resolve_cli_rejects_bad_status(tmp_repo, monkeypatch):
 
 
 def test_confirm_cli_sets_outcome(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001"))
     monkeypatch.chdir(tmp_repo.root)
     result = runner.invoke(app, ["confirm", "chk_001", "--outcome", "rolled_back"])
@@ -374,7 +374,7 @@ def test_confirm_cli_sets_outcome(tmp_repo, record_factory, monkeypatch):
 
 
 def test_memory_list_and_show(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001"))
     monkeypatch.chdir(tmp_repo.root)
     listed = runner.invoke(app, ["memory", "list"])
@@ -395,7 +395,7 @@ def test_store_importable_without_fcntl(monkeypatch):
     import importlib
     import types
 
-    import proofloop.memory.store as store_mod
+    import proofjury.memory.store as store_mod
 
     fake_msvcrt = types.ModuleType("msvcrt")
     fake_msvcrt.LK_LOCK = 0
@@ -409,8 +409,11 @@ def test_store_importable_without_fcntl(monkeypatch):
         assert store_mod.msvcrt is fake_msvcrt
     finally:
         monkeypatch.undo()
-        importlib.reload(store_mod)  # restore the POSIX state for other tests
-    assert store_mod.fcntl is not None
+        importlib.reload(store_mod)  # restore the real platform state
+    # fcntl is the POSIX lock backend; on Windows it genuinely doesn't exist
+    # (msvcrt is used), so only the POSIX baseline can assert it's present.
+    if sys.platform != "win32":
+        assert store_mod.fcntl is not None
 
 
 def test_windows_lock_fallback_serializes(monkeypatch):
@@ -418,7 +421,7 @@ def test_windows_lock_fallback_serializes(monkeypatch):
     LK_UNLCK on the same 1-byte range."""
     import types
 
-    import proofloop.memory.store as store_mod
+    import proofjury.memory.store as store_mod
 
     events: list[tuple] = []
 
@@ -462,7 +465,7 @@ def test_windows_lock_fallback_serializes(monkeypatch):
 
 
 def test_resolution_merge_preserves_history(tmp_path, record_factory):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     store.append(record_factory("chk_001"))
     store.update_resolution(
         "chk_001", {"status": "accepted", "note": None, "at": "t1"}
@@ -490,7 +493,7 @@ def test_resolution_merge_preserves_history(tmp_path, record_factory):
 
 
 def test_confirm_does_not_clobber_auto_resolved(tmp_repo, record_factory, monkeypatch):
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001"))
     store.update_resolution(
         "chk_001", {"status": "auto_resolved", "resolved_by": "chk_002", "at": "t1"}
@@ -507,7 +510,7 @@ def test_confirm_does_not_clobber_auto_resolved(tmp_repo, record_factory, monkey
 
 def test_resolve_then_confirm_cli_roundtrip(tmp_repo, record_factory, monkeypatch):
     """Acceptance: resolve → confirm keeps the accepted label in history."""
-    store = MemoryStore(tmp_repo.root / ".proofloop")
+    store = MemoryStore(tmp_repo.root / ".proofjury")
     store.append(record_factory("chk_001"))
     monkeypatch.chdir(tmp_repo.root)
     assert runner.invoke(app, ["resolve", "chk_001", "--status", "accepted"]).exit_code == 0

@@ -21,20 +21,20 @@ const instrumentSerif = Instrument_Serif({
 });
 
 const description =
-  "Proofloop is the correctness gate for AI-written code. Deterministic checks decide at the deploy moment, an LLM explains why, every verdict ships with a reproducible proof record — and every catch is remembered.";
+  "Proofjury is the correctness gate for AI-written code. Deterministic checks decide at the deploy moment, an LLM explains why, every verdict ships with a reproducible proof record — and every catch is remembered.";
 
 export const metadata: Metadata = {
-  title: "Proofloop — The last command before production",
+  title: "Proofjury — The last command before production",
   description,
   openGraph: {
-    title: "Proofloop — The last command before production",
+    title: "Proofjury — The last command before production",
     description,
-    siteName: "Proofloop",
+    siteName: "Proofjury",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "Proofloop — The last command before production",
+    title: "Proofjury — The last command before production",
     description,
   },
 };

@@ -1,6 +1,6 @@
 # Deploy-Time Correctness Failure Taxonomy v0.2
 
-An open specification for the failure classes Proofloop detects at the
+An open specification for the failure classes Proofjury detects at the
 deploy boundary. Scope: **correctness, not security** — mistakes an AI
 coding agent (or human) makes that break a deployment, not vulnerabilities.
 
@@ -50,7 +50,7 @@ entry per missing variable, anchored at its first read.
 publishes it; correctness impact is coupled to config drift (the literal
 silently overrides the intended environment-provided value).
 
-**Detection.** Proofloop's `SecretScanner`: provider-shaped regexes — AWS
+**Detection.** Proofjury's `SecretScanner`: provider-shaped regexes — AWS
 (`AKIA[0-9A-Z]{16}`), Stripe (`sk_(live|test)_[0-9a-zA-Z]{24,}`), GitHub
 (`gh[pousr]_…`), Slack (`xox[baprs]-…`), private-key headers — plus a generic
 `(api[_-]?key|secret|token|password) = "…"` pattern gated by Shannon entropy
@@ -100,21 +100,21 @@ present but not gitignored.
 **Definition.** The project defines a build step but no successful build is
 recorded for the exact worktree being deployed.
 
-**Detection.** Session marker stamped by `proofloop run build -- <cmd>`:
+**Detection.** Session marker stamped by `proofjury run build -- <cmd>`:
 absent, older than 24h, worktree-digest mismatch, or non-zero exit all fail.
 The digest binds the marker to worktree contents (git status + diff + HEAD,
 or a content hash outside git). Skipped when no build step exists (no
-package.json build script and no `[commands].build` in `.proofloop.toml`).
+package.json build script and no `[commands].build` in `.proofjury.toml`).
 Builds are never run inline by the gate.
 
-**Evidence format.** `REASON (.proofloop/session.json:1)`, e.g.
+**Evidence format.** `REASON (.proofjury/session.json:1)`, e.g.
 `no build recorded for this worktree` or `build failed with exit code 1 (npm run build)`.
 
 **Example record entry.**
 ```json
 { "name": "build", "type": "deterministic", "passed": false,
   "failure_class": "build_failure",
-  "evidence": "code changed since the last build (worktree digest mismatch) (.proofloop/session.json:1)" }
+  "evidence": "code changed since the last build (worktree digest mismatch) (.proofjury/session.json:1)" }
 ```
 
 ---
@@ -125,11 +125,11 @@ Builds are never run inline by the gate.
 worktree (never ran, ran >24h ago, or code changed since). `test_failure`:
 the recorded run exists and failed — deploying ships known-broken code.
 
-**Detection.** Session marker stamped by `proofloop run tests -- <cmd>`
+**Detection.** Session marker stamped by `proofjury run tests -- <cmd>`
 (same digest mechanism as builds). Marker absent/stale/digest-mismatched →
 `tests_not_run`; recorded `exit_code != 0` → `test_failure`.
 
-**Evidence format.** `REASON (.proofloop/session.json:1)`, e.g.
+**Evidence format.** `REASON (.proofjury/session.json:1)`, e.g.
 `code changed since tests last ran (worktree digest mismatch)` or
 `test run failed with exit code 1 (pytest -q)`.
 
@@ -137,7 +137,7 @@ the recorded run exists and failed — deploying ships known-broken code.
 ```json
 { "name": "tests", "type": "deterministic", "passed": false,
   "failure_class": "tests_not_run",
-  "evidence": "no test run recorded for this worktree (.proofloop/session.json:1)" }
+  "evidence": "no test run recorded for this worktree (.proofjury/session.json:1)" }
 ```
 
 ---
@@ -149,18 +149,18 @@ skipped (or failed) for this worktree — the cheapest available correctness
 signal was not consulted before shipping.
 
 **Detection.** Session markers for kinds `lint` and `typecheck` (stamped by
-`proofloop run lint|typecheck -- <cmd>`), applicable when configured in
-`.proofloop.toml [commands]` or present as package.json scripts; same
+`proofjury run lint|typecheck -- <cmd>`), applicable when configured in
+`.proofjury.toml [commands]` or present as package.json scripts; same
 freshness/digest rules. Skipped when neither is configured.
 
-**Evidence format.** `KIND REASON (.proofloop/session.json:1)`, e.g.
+**Evidence format.** `KIND REASON (.proofjury/session.json:1)`, e.g.
 `lint not run for this worktree` or `typecheck failed with exit code 2`.
 
 **Example record entry.**
 ```json
 { "name": "preprod", "type": "deterministic", "passed": false,
   "failure_class": "preprod_check_skipped",
-  "evidence": "lint not run for this worktree (.proofloop/session.json:1)" }
+  "evidence": "lint not run for this worktree (.proofjury/session.json:1)" }
 ```
 
 ---
@@ -176,7 +176,7 @@ call yields the changed set (staged, unstaged, and untracked — a fresh
 migration file is usually untracked). Built-in rules: Prisma
 (`prisma/schema.prisma` vs `prisma/migrations/`) and Django (`**/models.py`
 vs `**/migrations/`). Other stacks opt in via
-`.proofloop.toml [checks.migrations] schema = [...] / migrations_dir = "..."`
+`.proofjury.toml [checks.migrations] schema = [...] / migrations_dir = "..."`
 (alembic is config-only: SQLAlchemy models have no canonical path). Skipped
 outside a git repo or when no schema source changed.
 
@@ -262,7 +262,7 @@ evidence (see Versioning below), never as model judgment.
 
 The failure spectrum runs hard/objective → soft/subjective. Tiers 1–2
 (doesn't run / functionally wrong) are owned by the compiler and test
-suite — Proofloop only enforces that they *ran*. Tier 3 (deploy
+suite — Proofjury only enforces that they *ran*. Tier 3 (deploy
 readiness) is this taxonomy: the deterministic checks above. Tiers 4–5
 (bad engineering / not what was asked) cannot be enumerated as
 deterministic classes, so they get a separate, **advisory-only** surface
@@ -293,7 +293,7 @@ classes become deterministic checks, never model judgment.
 
 ## Versioning
 
-This is v0.1 of an open spec. Additions must be additive (new classes, new
+This is v0.2 of an open spec. Additions must be additive (new classes, new
 evidence fields); renames or semantic changes to existing classes require a
 major version bump, since persisted memory records reference these class
 names verbatim.

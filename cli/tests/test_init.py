@@ -1,10 +1,10 @@
-"""proofloop init: scaffolding + non-clobbering .claude/settings.json merge."""
+"""proofjury init: scaffolding + non-clobbering .claude/settings.json merge."""
 
 import json
 
 from typer.testing import CliRunner
 
-from proofloop.cli import app
+from proofjury.cli import app
 
 runner = CliRunner()
 
@@ -21,11 +21,11 @@ def test_init_scaffolds_everything(tmp_repo, monkeypatch):
     monkeypatch.chdir(tmp_repo.root)
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0
-    assert (tmp_repo.root / ".proofloop").is_dir()
-    assert (tmp_repo.root / ".proofloop.toml").is_file()
+    assert (tmp_repo.root / ".proofjury").is_dir()
+    assert (tmp_repo.root / ".proofjury.toml").is_file()
     settings = json.loads((tmp_repo.root / ".claude" / "settings.json").read_text())
-    assert "proofloop hook" in _hook_commands(settings)
-    assert "proofloop guard deploy" in result.stdout  # AGENTS.md snippet printed
+    assert "proofjury hook" in _hook_commands(settings)
+    assert "proofjury guard deploy" in result.stdout  # AGENTS.md snippet printed
 
 
 def test_init_merges_existing_settings_without_clobbering(tmp_repo, monkeypatch):
@@ -40,18 +40,18 @@ def test_init_merges_existing_settings_without_clobbering(tmp_repo, monkeypatch)
     merged = json.loads((tmp_repo.root / ".claude" / "settings.json").read_text())
     assert merged["permissions"] == {"allow": ["Bash(ls:*)"]}  # untouched
     assert merged["hooks"]["PostToolUse"] == existing["hooks"]["PostToolUse"]
-    assert "proofloop hook" in _hook_commands(merged)
+    assert "proofjury hook" in _hook_commands(merged)
 
 
 def test_init_is_idempotent(tmp_repo, monkeypatch):
     monkeypatch.chdir(tmp_repo.root)
     runner.invoke(app, ["init"])
-    toml_before = (tmp_repo.root / ".proofloop.toml").read_text()
+    toml_before = (tmp_repo.root / ".proofjury.toml").read_text()
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0
     settings = json.loads((tmp_repo.root / ".claude" / "settings.json").read_text())
-    assert _hook_commands(settings).count("proofloop hook") == 1  # no duplicate
-    assert (tmp_repo.root / ".proofloop.toml").read_text() == toml_before
+    assert _hook_commands(settings).count("proofjury hook") == 1  # no duplicate
+    assert (tmp_repo.root / ".proofjury.toml").read_text() == toml_before
 
 
 def test_init_backs_off_on_invalid_settings_json(tmp_repo, monkeypatch):
@@ -69,8 +69,8 @@ def test_render_toml_handles_single_quotes(tmp_repo, monkeypatch):
     import re
     import tomllib
 
-    from proofloop.cli import _render_proofloop_toml
-    from proofloop.hooks import detect_extra_deploy_patterns
+    from proofjury.cli import _render_proofjury_toml
+    from proofjury.hooks import detect_extra_deploy_patterns
 
     tmp_repo.write(
         "package.json",
@@ -79,7 +79,7 @@ def test_render_toml_handles_single_quotes(tmp_repo, monkeypatch):
     extras = detect_extra_deploy_patterns(tmp_repo.root)
     assert any("o" in p and "brien" in p for p in extras)
 
-    rendered = _render_proofloop_toml(extras)
+    rendered = _render_proofjury_toml(extras)
     parsed = tomllib.loads(rendered)  # round-trips as valid TOML
     patterns = parsed["hook"]["deploy_patterns_extra"]
     assert len(patterns) == len(extras)
@@ -103,7 +103,7 @@ def test_init_merges_cursor_hooks_without_clobbering(tmp_repo, monkeypatch):
     data = json.loads((tmp_repo.root / ".cursor" / "hooks.json").read_text())
     before = data["hooks"]["beforeShellExecution"]
     assert {"command": "my-other-hook"} in before  # unrelated entries survive
-    assert {"command": "proofloop hook --agent cursor"} in before
+    assert {"command": "proofjury hook --agent cursor"} in before
     assert data["hooks"]["afterFileEdit"] == [{"command": "format-on-save"}]
     assert data["version"] == 1
 
@@ -118,7 +118,7 @@ def test_init_merges_codex_hooks_idempotent(tmp_repo, monkeypatch):
     data = json.loads(written)
     entry = data["hooks"]["PreToolUse"][0]
     assert entry["matcher"] == "Bash"
-    assert entry["hooks"][0]["command"] == "proofloop hook --agent codex"
+    assert entry["hooks"][0]["command"] == "proofjury hook --agent codex"
     assert "trust this folder" in first.stdout  # the Codex trust caveat
 
     second = runner.invoke(app, ["init"])

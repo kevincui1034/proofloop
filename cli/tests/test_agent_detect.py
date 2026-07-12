@@ -1,6 +1,6 @@
 """agent_source detection from environment markers."""
 
-from proofloop.agent_detect import detect_agent_source
+from proofjury.agent_detect import detect_agent_source
 
 
 def test_claude_via_claudecode_flag():
@@ -24,7 +24,7 @@ def test_codex_via_env_prefix():
 
 
 def test_override_wins():
-    env = {"PROOFLOOP_AGENT_SOURCE": "codex", "CLAUDECODE": "1"}
+    env = {"PROOFJURY_AGENT_SOURCE": "codex", "CLAUDECODE": "1"}
     assert detect_agent_source(env) == "codex"
 
 

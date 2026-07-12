@@ -1,6 +1,6 @@
 """config_mismatch: localhost, debug flags, test keys, ports, env hygiene."""
 
-from proofloop.checks.config import check_config
+from proofjury.checks.config import check_config
 
 
 def _details(result):

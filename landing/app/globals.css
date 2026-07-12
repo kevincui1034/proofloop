@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* ————— Proofloop: two worlds, one scroll —————
+/* ————— Proofjury: two worlds, one scroll —————
    Every component styles itself with the semantic tokens below. The night
    world (courtroom dark) is the default; [data-world="paper"] rescopes the
    same tokens for the proof-record world. The attribute lives in two places:

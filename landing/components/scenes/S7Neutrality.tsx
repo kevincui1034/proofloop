@@ -146,7 +146,7 @@ export default function S7Neutrality() {
                 fontFamily="var(--font-geist-mono)"
               >
                 <textPath href="#seal-arc" startOffset="2">
-                  PROOFLOOP · NEUTRAL BENCH · EST. 2026 ·
+                  PROOFJURY · NEUTRAL BENCH · EST. 2026 ·
                 </textPath>
               </text>
               {/* gate glyph, centered */}
@@ -176,7 +176,7 @@ export default function S7Neutrality() {
             <span className="underline decoration-verdict-red decoration-[3px] underline-offset-[6px]">
               dangerous
             </span>{" "}
-            command. Proofloop stops the{" "}
+            command. Proofjury stops the{" "}
             <span className="underline decoration-amber-deep decoration-[3px] underline-offset-[6px]">
               broken
             </span>{" "}

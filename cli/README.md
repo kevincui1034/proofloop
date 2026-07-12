@@ -1,13 +1,13 @@
-# Proofloop
+# Proofjury
 
 **A correctness gate for AI-written code.** Coding agents now write large
-volumes of code that no human reviews. Proofloop catches what an agent got
+volumes of code that no human reviews. Proofjury catches what an agent got
 *wrong* before it ships, **proves** exactly why with `file:line` evidence,
 and **remembers** each failure so it's caught faster next time — across any
 agent: Claude, Codex, Cursor.
 
 ```
-proofloop guard deploy -- ./deploy.sh
+proofjury guard deploy -- ./deploy.sh
 ```
 
 If the deterministic readiness checks fail, the command is **never spawned**.
@@ -19,12 +19,12 @@ record, and — on recurrence — an instant citation of the prior diagnosis
 
 ```bash
 # from GitHub (Python 3.11+)
-pip install "git+https://github.com/kevincui1034/proofloop.git#subdirectory=cli"
+pip install "git+https://github.com/kevincui1034/proofjury.git#subdirectory=cli"
 
 # or, working in a clone:
 pip install -e 'cli[dev]'        # includes the test extras
 
-proofloop init                   # wire up .proofloop/, agent hooks, config
+proofjury init                   # wire up .proofjury/, agent hooks, config
 ```
 
 Requires Python 3.11+. Runtime deps: typer, rich, httpx.
@@ -33,37 +33,37 @@ Requires Python 3.11+. Runtime deps: typer, rich, httpx.
 
 ```bash
 # 1. Gate a deploy — checks fail → BLOCKED (exit 2), command never runs
-proofloop guard deploy -- ./deploy.sh
+proofjury guard deploy -- ./deploy.sh
 
 # 2. Fix, and tell the gate tests actually ran against this worktree
 export STRIPE_API_KEY=... DATABASE_URL=...
-proofloop run tests -- pytest -q
+proofjury run tests -- pytest -q
 
 # 3. Gate passes → the deploy executes, exit code propagates
-proofloop guard deploy -- ./deploy.sh
+proofjury guard deploy -- ./deploy.sh
 ```
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `proofloop guard <action> -- <cmd...>` | Run readiness checks; exec `<cmd>` only if they pass. `--force` (logged), `--no-exec`, `--json`, `--env-file` (evaluate env checks against the deploy target's env file instead of your shell). |
-| `proofloop run <kind> -- <cmd...>` | Run tests/build/lint/typecheck and stamp a worktree-bound session marker. |
-| `proofloop resolve <id> --status accepted\|false_positive` | Label whether a block was correct. |
-| `proofloop confirm <id> --outcome shipped\|rolled_back` | Post-deploy ground truth. |
-| `proofloop advisory approve\|reject\|confirm <id#i>` | Review an advisory finding (e.g. `chk_012#0`): approve a held one for delivery, reject a wrong one (it never re-fires; a delivered one is retracted on the next event), confirm a correct one. |
-| `proofloop login` / `logout` | Store / remove an LLM API key for judge explanations (BYOK). |
-| `proofloop memory list` / `show <id>` | Inspect the memory. |
-| `proofloop memory export` | Emit the records as training-ready JSONL (each row gets a computed `label`). `--labeled-only`, `--failure-class X`, `--dedupe`, `-o PATH`. |
-| `proofloop memory stats` | Dataset health metrics + judge spend from the cost ledger. `--json`. |
-| `proofloop init` | Create `.proofloop/`, write the Claude Code PreToolUse hook, `.proofloop.toml`, print the AGENTS.md snippet. |
+| `proofjury guard <action> -- <cmd...>` | Run readiness checks; exec `<cmd>` only if they pass. `--force` (logged), `--no-exec`, `--json`, `--env-file` (evaluate env checks against the deploy target's env file instead of your shell). |
+| `proofjury run <kind> -- <cmd...>` | Run tests/build/lint/typecheck and stamp a worktree-bound session marker. |
+| `proofjury resolve <id> --status accepted\|false_positive` | Label whether a block was correct. |
+| `proofjury confirm <id> --outcome shipped\|rolled_back` | Post-deploy ground truth. |
+| `proofjury advisory approve\|reject\|confirm <id#i>` | Review an advisory finding (e.g. `chk_012#0`): approve a held one for delivery, reject a wrong one (it never re-fires; a delivered one is retracted on the next event), confirm a correct one. |
+| `proofjury login` / `logout` | Store / remove an LLM API key for judge explanations (BYOK). |
+| `proofjury memory list` / `show <id>` | Inspect the memory. |
+| `proofjury memory export` | Emit the records as training-ready JSONL (each row gets a computed `label`). `--labeled-only`, `--failure-class X`, `--dedupe`, `-o PATH`. |
+| `proofjury memory stats` | Dataset health metrics + judge spend from the cost ledger. `--json`. |
+| `proofjury init` | Create `.proofjury/`, write the Claude Code PreToolUse hook, `.proofjury.toml`, print the AGENTS.md snippet. |
 
 ### Exit codes
 
 - `0` — gate passed and the child succeeded (or `--no-exec`)
 - `N` — the child's exit code (`127`/`126` when the child command is missing/not executable; `128 + N` when the child dies to signal `N`)
 - `2` — **BLOCKED** (the command was never spawned)
-- `3` — internal proofloop error (an internal error never silently allows)
+- `3` — internal proofjury error (an internal error never silently allows)
 - `64` — usage error (`EX_USAGE`) — e.g. the wrapped command was not separated with ` -- `
 
 ## Checks (deterministic — no LLM in the pass/fail path)
@@ -85,7 +85,7 @@ See [TAXONOMY.md](TAXONOMY.md) for the open failure-class spec.
 ## The judge (offline-first)
 
 Failures are *explained* — never decided — by a judge. By default this is a
-deterministic template engine (`deterministic/proofloop-v1`, zero cost,
+deterministic template engine (`deterministic/proofjury-v1`, zero cost,
 offline). Pass/fail never depends on a model: deterministic checks decide, the
 LLM only writes the explanation, any LLM error falls back to the deterministic
 judge, and the gate runs fully offline with no key. On a strong recurrence
@@ -97,12 +97,12 @@ diagnosis is cited deterministically — **no model call**, even when a key is s
 To get LLM-written explanations, bring your own key — no file editing:
 
 ```bash
-proofloop login          # pick a provider, paste a key (hidden input)
-proofloop logout         # remove it
-# scriptable:  proofloop login --provider anthropic --api-key <key> --no-verify
+proofjury login          # pick a provider, paste a key (hidden input)
+proofjury logout         # remove it
+# scriptable:  proofjury login --provider anthropic --api-key <key> --no-verify
 ```
 
-`login` stores the key at `~/.config/proofloop/config.toml` (mode `0600`,
+`login` stores the key at `~/.config/proofjury/config.toml` (mode `0600`,
 outside the repo — one key across all your projects) and does a best-effort
 live check. Pick any provider; the defaults are deliberately cheap because the
 judge only explains a deterministic finding:
@@ -114,12 +114,12 @@ judge only explains a deterministic finding:
 | OpenAI | `gpt-4o-mini` | cheap |
 
 All three adapters call the provider's REST endpoint directly over `httpx` —
-no vendor SDK. Per-call cost is appended to `.proofloop/ledger.jsonl`.
+no vendor SDK. Per-call cost is appended to `.proofjury/ledger.jsonl`.
 
 Env vars still work and take precedence over the stored config:
 `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` select and key a
-provider (auto-detected in that order); `PROOFLOOP_JUDGE_PROVIDER` names one
-explicitly; `PROOFLOOP_JUDGE_MODEL` overrides the model; `PROOFLOOP_NO_LLM=1`
+provider (auto-detected in that order); `PROOFJURY_JUDGE_PROVIDER` names one
+explicitly; `PROOFJURY_JUDGE_MODEL` overrides the model; `PROOFJURY_NO_LLM=1`
 forces offline.
 
 ### The advisory judge (optional — model judgment, never blocking)
@@ -144,18 +144,18 @@ event as non-blocking context (Claude Code `additionalContext` — no
 permission decision is ever attached; on a blocked run it rides along in the
 deny reason). Between `hold_min_confidence` (default 0.4) and that, it is
 **held**: you see it in the terminal with an `approve`/`reject` command and
-the agent only sees it after `proofloop advisory approve chk_012#0` (it goes
+the agent only sees it after `proofjury advisory approve chk_012#0` (it goes
 out on the next deploy event). Below the floor it is recorded only. You see
 every finding either way.
 
-`proofloop advisory reject chk_012#0` does three things: labels the finding
+`proofjury advisory reject chk_012#0` does three things: labels the finding
 (training signal), permanently stops that finding's signature from re-firing
 or grounding future reviews, and — if the agent already saw it — sends a
 retraction note on the next deploy event. What an agent already read cannot
 be unread; the suppression is immediate, the retraction lands one event
 later.
 
-`proofloop advisory confirm` is the graduation path: a signature confirmed
+`proofjury advisory confirm` is the graduation path: a signature confirmed
 three times shows up in `memory stats` as a **candidate deterministic
 check** — the model discovers the class, a human writes the `file:line`
 check, and enforcement moves back to the provable core. New failure classes
@@ -163,10 +163,10 @@ stay deterministic, never model judgment (see TAXONOMY.md).
 
 Tier-5 findings ("not what was asked") need the task: it's captured
 opportunistically from the agent transcript by the hook, or via
-`proofloop guard deploy --task "..."`, `PROOFLOOP_TASK`, or
-`[session].task` in `.proofloop.toml`. Without one they simply don't fire.
+`proofjury guard deploy --task "..."`, `PROOFJURY_TASK`, or
+`[session].task` in `.proofjury.toml`. Without one they simply don't fire.
 
-Tune or disable in `.proofloop.toml`:
+Tune or disable in `.proofjury.toml`:
 
 ```toml
 [advisory]
@@ -182,7 +182,7 @@ Tune or disable in `.proofloop.toml`:
 ## Memory — the dataset is the product
 
 Every run (pass or fail) appends one training-ready record to
-`.proofloop/memory.jsonl` (+ a human section in `memory.md`): the checks,
+`.proofjury/memory.jsonl` (+ a human section in `memory.md`): the checks,
 evidence, judge input/output, proof refs, `recalled_from`, and a
 `resolution` filled in later by `resolve`/`confirm` or automatically when a
 passing run fixes a prior block (`resolves` / `auto_resolved`). Env var
@@ -205,11 +205,33 @@ demoted, never excluded. `accepted` labels rehabilitate a class. The
 per-class counts behind this are visible in `memory stats` under
 `class_reliability`.
 
+### Memory recall across your repos
+
+Memory compounds across the repos on your machine. Every gate run
+registers its repo's store in a user-level registry
+(`${XDG_CONFIG_HOME:-~/.config}/proofjury/registry.json`), and when a
+failure has no matching prior in the current repo — or as extra context
+for the judge — recall also consults your other repos' stores, read-only.
+A cross-repo prior is cited as `<repo>:<chk_id>` ("seen before in
+\<repo\>") and is context only: it sorts below every same-repo prior,
+never short-circuits the judge the way a same-repo recurrence does, and
+never affects pass/fail. `proofjury memory repos` shows what recall can
+see. Opt a repo out with:
+
+```toml
+[memory]
+cross_repo = false   # neither reads other repos' stores nor is read by them
+```
+
+(or set `PROOFJURY_NO_CROSS_REPO=1` for a single run). Records are
+already env-value-scrubbed when written, and nothing ever leaves your
+machine — the registry is a local file of local paths.
+
 Two read-only views over the dataset:
 
 ```bash
-proofloop memory export --labeled-only --dedupe > dataset.jsonl
-proofloop memory stats --json
+proofjury memory export --labeled-only --dedupe > dataset.jsonl
+proofjury memory stats --json
 ```
 
 `export` emits one JSON row per record with a computed `label`
@@ -217,12 +239,12 @@ proofloop memory stats --json
 `confirmed:shipped`, `confirmed:rolled_back`); `--dedupe` keeps the last
 record per `inputs_hash`. `stats` reports block/pass counts, failure-class
 and label distributions, recall hit rate, auto-resolve rate, gate latency,
-and judge spend aggregated from `.proofloop/ledger.jsonl`. Both work fully
+and judge spend aggregated from `.proofjury/ledger.jsonl`. Both work fully
 offline and never modify the store.
 
 ## Agent integration
 
-`proofloop init` installs pre-execution hooks that intercept deploy-shaped
+`proofjury init` installs pre-execution hooks that intercept deploy-shaped
 shell commands. A failing gate answers with a **deny** whose reason contains
 the failed checks, evidence, and exact fix steps — so the agent
 self-corrects. Everything else (non-deploy commands, passing gates) gets
@@ -238,7 +260,7 @@ hook never auto-approves. For all agents, add the snippet from
 | Cursor | `beforeShellExecution` | `.cursor/hooks.json` — when Cursor is detected (or `--all-agents`) |
 | OpenAI Codex CLI | `PreToolUse` (matcher `Bash`) | `.codex/hooks.json` — when Codex is detected (or `--all-agents`) |
 
-All three run `proofloop hook` (Cursor/Codex with `--agent cursor|codex`, so
+All three run `proofjury hook` (Cursor/Codex with `--agent cursor|codex`, so
 records carry the right `agent_source`). Existing hook entries are merged,
 never clobbered, and re-running `init` is idempotent.
 
@@ -248,10 +270,10 @@ Caveats worth knowing:
   run `codex` once and accept the prompt. Codex's streaming exec path can
   bypass hooks, so keep the AGENTS.md snippet for full Codex coverage.
 - **Cursor + virtualenvs:** GUI-launched Cursor doesn't inherit a
-  shell-activated venv PATH. Install proofloop user-wide (`pipx install
-  proofloop`) or put the absolute path in `.cursor/hooks.json`.
+  shell-activated venv PATH. Install proofjury user-wide (`pipx install
+  proofjury`) or put the absolute path in `.cursor/hooks.json`.
 - **Cursor exit semantics:** exit 2 blocks; other non-zero exits fail open —
-  proofloop's internal-error path therefore denies with exit 2.
+  proofjury's internal-error path therefore denies with exit 2.
 
 ### What counts as a "deploy"
 
@@ -265,7 +287,7 @@ anchored to the command position, so a tool name inside a quoted string or a
 file argument (`cat wrangler.toml`, `git commit -m "add docker push"`) is not
 mistaken for a deploy.
 
-Tune it in `.proofloop.toml [hook]`:
+Tune it in `.proofjury.toml [hook]`:
 
 ```toml
 [hook]
@@ -276,7 +298,7 @@ deploy_patterns_extra = ['(?:^|[;&|])\s*bin/release\b']
 # deploy_patterns = ['^make ship$']
 ```
 
-`proofloop init` also **detects your stack** — it reads deploy markers
+`proofjury init` also **detects your stack** — it reads deploy markers
 (`fly.toml`, `wrangler.toml`, `Dockerfile`, `serverless.yml`, `*.tf`, …) to
 print what it found, and seeds `deploy_patterns_extra` from `package.json`
 deploy scripts the defaults might miss (e.g. `deploy:prod`).
@@ -285,7 +307,7 @@ deploy scripts the defaults might miss (e.g. `deploy:prod`).
 
 The gate also intercepts two more moments, each with its own patterns
 (`release_patterns[_extra]`, `merge_patterns[_extra]` — same convention as
-deploy) and its own check profile in `.proofloop.toml [actions]`:
+deploy) and its own check profile in `.proofjury.toml [actions]`:
 
 - **Releases** (`npm publish`, `cargo publish`, `twine upload`,
   `gh release create`, `git push --tags` / `git push origin v1.2.3`) are
@@ -303,7 +325,7 @@ A command matching two groups gates as the strictest story
 (deploy > release > merge). Memory recall is action-agnostic: a failure
 first diagnosed at deploy time is recalled when the same failure blocks a
 release or merge — same repo, same failure class, same fix. You can also
-invoke any action directly: `proofloop guard release -- npm publish`.
+invoke any action directly: `proofjury guard release -- npm publish`.
 
 ## License
 
