@@ -14,6 +14,8 @@
 #   5. LLM leg: fresh workdir + mock OpenRouter server → the judge writes
 #      the diagnosis, the ledger records the cost. The exit code is 2 with
 #      or without the LLM — deterministic checks decide, the LLM explains.
+#      The fresh repo also recalls the app repo's prior block cross-repo
+#      (recalled_from = app:chk_NNN) via the user-level store registry.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,6 +29,10 @@ command -v proofloop >/dev/null 2>&1 || { echo "proofloop not on PATH (pip insta
 export PROOFLOOP_NO_LLM=1
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/proofloop-demo.XXXXXX")"
+# Isolated config home for the WHOLE demo: gates register their store in a
+# user-level registry (cross-repo memory recall) and step 5 runs `login` —
+# neither may ever touch the developer's real ~/.config/proofloop.
+export XDG_CONFIG_HOME="$WORK/xdg"
 APP="$WORK/app"
 cp -R "$ROOT/demo-app" "$APP"
 cd "$APP"
@@ -154,8 +160,6 @@ trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 for _ in $(seq 50); do [ -s "$WORK/mock.port" ] && break; sleep 0.1; done
 [ -s "$WORK/mock.port" ] || fail "step 5: mock server never reported a port"
 PORT="$(cat "$WORK/mock.port")"
-# Isolated config home: login must never touch ~/.config/proofloop.
-export XDG_CONFIG_HOME="$WORK/xdg"
 echo "\$ proofloop login --provider openrouter --api-key demo-key --no-verify"
 proofloop login --provider openrouter --api-key demo-key --no-verify
 echo "\$ proofloop guard deploy -- ./deploy.sh   (LLM judge via mock server)"
@@ -172,7 +176,17 @@ import json
 entries = [json.loads(l) for l in open(".proofloop/ledger.jsonl") if l.strip()]
 assert len(entries) == 1 and entries[0]["cost_usd"] == 0.00042, entries
 PY
-echo "→ LLM judge explained the block via the mock server, cost hit the ledger ✔"
+# Cross-repo memory recall: app-llm has no priors of its own, but the same
+# failure was blocked in the app repo earlier in this demo — the record
+# must cite it as <repo_id>:<chk_id>. Foreign priors never short-circuit
+# the judge, which is why the mock LLM assertion above still held.
+RECALLED5="$(rec 0 'r["recalled_from"]' | tr -d '"')"
+case "$RECALLED5" in
+  app:chk_*) ;;
+  *) fail "step 5: expected cross-repo recalled_from app:chk_NNN, got '$RECALLED5'" ;;
+esac
+echo "→ LLM judge explained the block via the mock server, cost hit the ledger,"
+echo "  and the failure was recalled cross-repo from $RECALLED5 ✔"
 
 # ---------------------------------------------------------------------------
 banner "DEMO PASSED"

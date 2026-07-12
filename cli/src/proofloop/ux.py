@@ -57,13 +57,20 @@ def render_blocked(
         parts.append(fix_lines)
 
     if recalled is not None:
+        if ":" in recalled.id:  # cross-repo prior: <repo_id>:<chk_id>
+            repo_part = recalled.id.rpartition(":")[0]
+            recall_text = (
+                f"↩ Recalled from {recalled.id} — this failure was seen before "
+                f"in {repo_part} ({recalled.created_at})."
+            )
+        else:
+            recall_text = (
+                f"↩ Recalled from {recalled.id} — this failure was diagnosed before "
+                f"in this repo ({recalled.created_at})."
+            )
         parts.append(
             Panel(
-                Text(
-                    f"↩ Recalled from {recalled.id} — this failure was diagnosed before "
-                    f"in this repo ({recalled.created_at}).",
-                    style="yellow",
-                ),
+                Text(recall_text, style="yellow"),
                 border_style="yellow",
                 box=box.ROUNDED,
             )

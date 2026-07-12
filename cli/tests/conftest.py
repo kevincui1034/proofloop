@@ -70,9 +70,16 @@ def tmp_repo(tmp_path: Path) -> Repo:
 
 
 @pytest.fixture
-def scrubbed_env() -> dict[str, str]:
-    """Minimal deploy environment so host env vars never leak into checks."""
-    return {"HOME": "/tmp/proofloop-test-home", "PATH": os.environ.get("PATH", "/usr/bin")}
+def scrubbed_env(tmp_path_factory) -> dict[str, str]:
+    """Minimal deploy environment so host env vars never leak into checks.
+
+    HOME must be per-test AND outside the test repo: the gate registers
+    its store in a user-level registry under HOME, so a shared HOME would
+    let tests recall each other's stores cross-repo, and a HOME inside
+    the repo root would enter the worktree digest and re-arm tests_not_run.
+    """
+    home = tmp_path_factory.mktemp("proofloop-home")
+    return {"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin")}
 
 
 @pytest.fixture

@@ -191,6 +191,41 @@ ADVISORY_DEFAULTS = {
 }
 
 
+#: Defaults for the repo-level ``.proofloop.toml [memory]`` table. Cross-repo
+#: recall reads other local repos' already-scrubbed stores read-only and
+#: never affects pass/fail, so it defaults ON.
+MEMORY_DEFAULTS = {
+    "cross_repo": True,
+}
+
+
+def memory_settings(repo_config: dict | None) -> dict:
+    """The ``[memory]`` table from ``.proofloop.toml`` merged over
+    ``MEMORY_DEFAULTS``. Malformed values fall back to the default for
+    that key — a config typo must never crash the gate.
+    """
+    settings = dict(MEMORY_DEFAULTS)
+    table = (repo_config or {}).get("memory")
+    if not isinstance(table, dict):
+        return settings
+    if isinstance(table.get("cross_repo"), bool):
+        settings["cross_repo"] = table["cross_repo"]
+    return settings
+
+
+def cross_repo_enabled(
+    repo_config: dict | None, env: Mapping[str, str] | None = None
+) -> bool:
+    """Whether this gate run participates in cross-repo memory recall.
+
+    ``PROOFLOOP_NO_CROSS_REPO`` (any non-empty value) wins over config —
+    a belt-and-braces off switch for CI and scripted runs.
+    """
+    if _env(env).get("PROOFLOOP_NO_CROSS_REPO"):
+        return False
+    return memory_settings(repo_config)["cross_repo"]
+
+
 def advisory_settings(repo_config: dict | None) -> dict:
     """The ``[advisory]`` table from ``.proofloop.toml`` merged over
     ``ADVISORY_DEFAULTS``. Malformed values fall back to the default for

@@ -169,6 +169,12 @@ PROOFLOOP_TOML_TEMPLATE = """\
 # gating from a plain shell.
 # task = "add rate limiting to the webhook endpoint"
 
+[memory]
+# Memory recall may cite prior records from your other repos on this
+# machine (read-only; local files only; never affects pass/fail). Set to
+# false to neither read other repos' stores nor let them read this one.
+# cross_repo = true
+
 [advisory]
 # The advisory judge (model judgment, never blocking). Runs only when an
 # LLM is configured (`proofloop login`); reviews the diff for risks the

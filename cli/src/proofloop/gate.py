@@ -25,17 +25,19 @@ from typing import Mapping
 
 from . import __version__, ux
 from .checks import CheckContext, CheckResult, resolve_check_profile, run_checks
-from .config import advisory_settings, llm_configured
+from .config import advisory_settings, cross_repo_enabled, llm_configured
 from .context import capture_context, git_summary, load_config
 from .judge import DeterministicJudge, JudgeInput, JudgeOutput, get_judge
 from .judge.advisory import AdvisoryFinding, AdvisoryInput, get_advisory_judge
 from .judge.deterministic import compile_fix_steps
 from .memory.recall import (
     advisory_signature,
+    is_foreign_prior,
     recall,
     rejected_advisory_signatures,
     strong_match,
 )
+from .memory.registry import foreign_stores, register_store
 from .memory.schema import MemoryRecord
 from .memory.store import MemoryStore
 from .session import load_session, now_iso, worktree_digest
@@ -367,6 +369,14 @@ def run_gate(
         # Fingerprint the env the checks actually evaluated (names only).
         run_context.env_fingerprint = sorted(deploy_env.keys())
     config = load_config(root)
+    cross_repo = cross_repo_enabled(config, env)
+    try:
+        # User-level registry: how other repos' gates find this store
+        # (and vice versa). Best-effort — never fails the gate. Opted-out
+        # repos deregister, so they are neither readers nor read.
+        register_store(proof_root, run_context.repo_id, env, enabled=cross_repo)
+    except Exception:
+        pass
     digest = worktree_digest(root)
     session = load_session(root)
     task_ref = resolve_task_ref(task_ref, env, config)
@@ -387,7 +397,17 @@ def run_gate(
     failures = [r for r in results if not r.passed]
 
     # 3. Recall priors BEFORE judging, so the judge cites them
-    priors = recall(store, run_context.repo_id, failures) if failures else []
+    foreign: list = []
+    if failures and cross_repo:
+        try:
+            foreign = foreign_stores(proof_root, env)
+        except Exception:
+            foreign = []
+    priors = (
+        recall(store, run_context.repo_id, failures, foreign=foreign)
+        if failures
+        else []
+    )
     recalled = priors[0] if priors else None
     summary = scrub_text(git_summary(run_context), scrub_env)
     inputs_hash = _inputs_hash(
@@ -461,9 +481,15 @@ def run_gate(
         priors=priors[:3],
     )
     if failures:
-        if recalled is not None and strong_match(failures, recalled):
-            # Known recurrence: cite the prior deterministically —
-            # NO model call, even when an LLM judge is configured.
+        if (
+            recalled is not None
+            and not is_foreign_prior(recalled)
+            and strong_match(failures, recalled)
+        ):
+            # Known recurrence IN THIS REPO: cite the prior
+            # deterministically — NO model call, even when an LLM judge
+            # is configured. Foreign priors never short-circuit: their
+            # file:line anchors describe another repo's tree.
             engine = DeterministicJudge()
         else:
             engine = judge if judge is not None else get_judge(env, proof_root)

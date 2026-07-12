@@ -503,6 +503,37 @@ def memory_list() -> None:
     console.print(table)
 
 
+@memory_app.command("repos")
+def memory_repos() -> None:
+    """List the repos cross-repo memory recall can see (user-level registry)."""
+    from .memory.registry import load_registry
+
+    repos = load_registry(os.environ)["repos"]
+    console = Console()
+    if not repos:
+        console.print(
+            "[dim]no repos registered yet — every `proofloop guard` run "
+            "registers its repo (disable with [memory] cross_repo = false)[/dim]"
+        )
+        return
+    table = Table(title="proofloop memory repos", box=box.SIMPLE_HEAD)
+    table.add_column("repo", style="bold")
+    table.add_column("store")
+    table.add_column("last seen")
+    table.add_column("records")
+    for path_str, entry in sorted(
+        repos.items(), key=lambda item: str(item[1].get("last_seen", "")), reverse=True
+    ):
+        alive = (Path(path_str) / "memory.jsonl").is_file()
+        table.add_row(
+            str(entry.get("repo_id", "?")),
+            path_str,
+            str(entry.get("last_seen", "—")),
+            "[green]present[/green]" if alive else "[red]missing[/red]",
+        )
+    console.print(table)
+
+
 @memory_app.command("show")
 def memory_show(record_id: str = typer.Argument(..., metavar="ID")) -> None:
     """Print one full record as JSON."""
@@ -562,7 +593,7 @@ def memory_stats(
     from .memory.export import stats
 
     store = _store()
-    data = stats(store, store.root / "ledger.jsonl")
+    data = stats(store, store.root / "ledger.jsonl", env=os.environ)
     if json_out:
         sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
         return
@@ -602,6 +633,13 @@ def memory_stats(
             + ", ".join(f"{k}={v}" for k, v in sorted(advisories["by_delivery"].items()))
             + " · labels: "
             + ", ".join(f"{k}={v}" for k, v in sorted(advisories["by_label"].items())),
+        )
+    cross_repo = data["cross_repo"]
+    if cross_repo["registered_repos"] or cross_repo["recall_hits"]:
+        table.add_row(
+            "cross-repo recall",
+            f"{cross_repo['registered_repos']} registered repo(s) · "
+            f"{cross_repo['recall_hits']} hit(s)",
         )
     ledger = data["ledger"]
     table.add_row(

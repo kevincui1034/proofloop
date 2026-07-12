@@ -205,6 +205,28 @@ demoted, never excluded. `accepted` labels rehabilitate a class. The
 per-class counts behind this are visible in `memory stats` under
 `class_reliability`.
 
+### Memory recall across your repos
+
+Memory compounds across the repos on your machine. Every gate run
+registers its repo's store in a user-level registry
+(`${XDG_CONFIG_HOME:-~/.config}/proofloop/registry.json`), and when a
+failure has no matching prior in the current repo — or as extra context
+for the judge — recall also consults your other repos' stores, read-only.
+A cross-repo prior is cited as `<repo>:<chk_id>` ("seen before in
+\<repo\>") and is context only: it sorts below every same-repo prior,
+never short-circuits the judge the way a same-repo recurrence does, and
+never affects pass/fail. `proofloop memory repos` shows what recall can
+see. Opt a repo out with:
+
+```toml
+[memory]
+cross_repo = false   # neither reads other repos' stores nor is read by them
+```
+
+(or set `PROOFLOOP_NO_CROSS_REPO=1` for a single run). Records are
+already env-value-scrubbed when written, and nothing ever leaves your
+machine — the registry is a local file of local paths.
+
 Two read-only views over the dataset:
 
 ```bash

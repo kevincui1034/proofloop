@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .recall import advisory_signature, class_reliability
+from .registry import load_registry
 from .store import MemoryStore
 
 #: Computed per-row label, derived from the CURRENT resolution status
@@ -146,12 +147,13 @@ def read_ledger(ledger_path: Path) -> dict:
     return {"total_cost_usd": total, "calls": calls, "by_model": by_model}
 
 
-def stats(store: MemoryStore, ledger_path: Path) -> dict:
+def stats(store: MemoryStore, ledger_path: Path, *, env=None) -> dict:
     """Dataset health metrics + cost-ledger aggregation."""
     records = 0
     blocked = 0
     passed = 0
     recalled = 0
+    cross_repo_hits = 0
     resolves = 0
     failure_classes: dict[str, int] = {}
     labels: dict[str, int] = {}
@@ -171,6 +173,8 @@ def stats(store: MemoryStore, ledger_path: Path) -> dict:
             blocked += 1
             if record.recalled_from:
                 recalled += 1
+                if ":" in record.recalled_from:  # <repo_id>:<chk_id>
+                    cross_repo_hits += 1
             for cls in sorted(record.failure_classes()):
                 failure_classes[cls] = failure_classes.get(cls, 0) + 1
     return {
@@ -191,4 +195,11 @@ def stats(store: MemoryStore, ledger_path: Path) -> dict:
         "class_reliability": class_reliability(store),
         "advisories": advisory_stats(store),
         "ledger": read_ledger(ledger_path),
+        # Memory recall across this machine's repos: how many stores the
+        # user-level registry knows, and how often a block here was
+        # explained by a prior from another repo.
+        "cross_repo": {
+            "registered_repos": len(load_registry(env)["repos"]),
+            "recall_hits": cross_repo_hits,
+        },
     }

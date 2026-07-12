@@ -122,7 +122,14 @@ class DeterministicJudge:
                 what = f"same {failures[0].failure_class} failure"
             else:
                 what = "same failure"
-            prefix = f"Seen before — matches {prior.id} ({prior.created_at}): {what}. "
+            if ":" in prior.id:  # cross-repo prior: <repo_id>:<chk_id>
+                repo, _, chk = prior.id.rpartition(":")
+                prefix = (
+                    f"Seen before in {repo} — matches {chk} there "
+                    f"({prior.created_at}): {what}. "
+                )
+            else:
+                prefix = f"Seen before — matches {prior.id} ({prior.created_at}): {what}. "
 
         if sentences:
             diagnosis = prefix + f"Blocking {judge_input.action} — " + " ".join(sentences)

@@ -12,6 +12,7 @@ env-var-name match. The best match becomes the new record's
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from typing import TYPE_CHECKING
 
@@ -37,6 +38,16 @@ EXCLUDED_RESOLUTIONS = frozenset({"false_positive"})
 #: them than accepted labels — before it is treated as noisy. One stray
 #: label never flips recall behavior.
 NOISY_MIN_FALSE_POSITIVES = 2
+
+#: Foreign (cross-repo) priors carry ``<repo_id>:<chk_id>`` ids, qualified
+#: at the recall boundary. Repo slugs (owner/repo or a directory name) and
+#: chk ids never contain a colon, so its presence is the foreignness test.
+FOREIGN_ID_SEP = ":"
+
+
+def is_foreign_prior(record: MemoryRecord) -> bool:
+    """True for a prior recalled from another repo's store (qualified id)."""
+    return FOREIGN_ID_SEP in record.id
 
 
 def class_reliability(store: MemoryStore, repo_id: str | None = None) -> dict[str, dict]:
@@ -149,8 +160,16 @@ def recall(
     store: MemoryStore,
     repo_id: str,
     failures: list["CheckResult"],
+    foreign: list[tuple[str, MemoryStore]] | None = None,
 ) -> list[MemoryRecord]:
-    """Ranked prior blocked records matching the current failures."""
+    """Ranked prior blocked records matching the current failures.
+
+    ``foreign`` is other repos' stores (from the user-level registry).
+    Foreign matches come back with ``<repo_id>:<chk_id>`` ids and sort as
+    a block BELOW every same-repo prior — cross-repo memory is context,
+    never the best explanation of a local failure while a local prior
+    exists, and never a strong-match short-circuit (guarded at the gate).
+    """
     classes = {r.failure_class for r in failures if r.failure_class}
     if not classes:
         return []
@@ -180,4 +199,35 @@ def recall(
             (trusted, score_match(current_tokens, record), record.created_at, record.id, record)
         )
     scored.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
-    return [record for *_ignore, record in scored]
+    local_priors = [record for *_ignore, record in scored]
+
+    # Foreign segment: same filters, but no repo_id check and no
+    # reliability demotion (this repo's labels don't describe another
+    # repo's noise). Sorted independently and appended AFTER every local
+    # prior, so a foreign record can never displace priors[0].
+    foreign_scored: list[tuple[int, str, str, MemoryRecord]] = []
+    for f_repo_id, f_store in foreign or []:
+        try:
+            for record in f_store.iter_records():
+                if record.gate_passed:
+                    continue
+                if ((record.resolution or {}).get("status")) in EXCLUDED_RESOLUTIONS:
+                    continue
+                if not classes & record.failure_classes():
+                    continue
+                qualified = dataclasses.replace(
+                    record,
+                    id=f"{record.repo_id or f_repo_id}{FOREIGN_ID_SEP}{record.id}",
+                )
+                foreign_scored.append(
+                    (
+                        score_match(current_tokens, record),
+                        record.created_at,
+                        qualified.id,
+                        qualified,
+                    )
+                )
+        except Exception:
+            continue  # one corrupt foreign store never poisons recall
+    foreign_scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return local_priors + [record for *_ignore, record in foreign_scored]
