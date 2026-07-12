@@ -293,7 +293,7 @@ classes become deterministic checks, never model judgment.
 
 ## Versioning
 
-This is v0.1 of an open spec. Additions must be additive (new classes, new
+This is v0.2 of an open spec. Additions must be additive (new classes, new
 evidence fields); renames or semantic changes to existing classes require a
 major version bump, since persisted memory records reference these class
 names verbatim.
