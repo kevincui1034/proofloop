@@ -3,15 +3,15 @@ name: Release
 # Publishing uses PyPI Trusted Publishing (OIDC) — no API-token secret
 # anywhere. MANUAL STEP, sequenced BEFORE the first tag push: register the
 # pending publisher on pypi.org (and test.pypi.org for dry runs) with
-# project "proofloop", owner "kevincui1034", repo "proofloop", workflow
+# project "proofjury", owner "kevincui1034", repo "proofjury", workflow
 # "release.yml", environment "pypi" / "testpypi". The first OIDC publish
 # fails (and burns the tag) unless the publisher is registered first.
 #
 # Dry run: Actions → Release → Run workflow (publishes to TestPyPI), then:
 #   pipx install --index-url https://test.pypi.org/simple/ \
-#     --pip-args="--extra-index-url https://pypi.org/simple/" proofloop
+#     --pip-args="--extra-index-url https://pypi.org/simple/" proofjury
 # Real release: bump BOTH version strings (cli/pyproject.toml +
-# cli/src/proofloop/__init__.py — test_version_sync pins them), tag vX.Y.Z,
+# cli/src/proofjury/__init__.py — test_version_sync pins them), tag vX.Y.Z,
 # push the tag.
 
 on:

@@ -1,13 +1,13 @@
-"""proofloop login / logout — BYOK key onboarding via the CLI."""
+"""proofjury login / logout — BYOK key onboarding via the CLI."""
 
 import stat
 import sys
 
 from typer.testing import CliRunner
 
-from proofloop import config
-from proofloop.cli import app
-from proofloop.judge import AnthropicJudge, DeterministicJudge, OpenAIJudge, get_judge
+from proofjury import config
+from proofjury.cli import app
+from proofjury.judge import AnthropicJudge, DeterministicJudge, OpenAIJudge, get_judge
 
 runner = CliRunner()
 
@@ -15,7 +15,7 @@ runner = CliRunner()
 def _point_config_at_tmp(monkeypatch, tmp_path):
     # Override the autouse offline fixture: real config path (tmp), LLM allowed.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
-    monkeypatch.delenv("PROOFLOOP_NO_LLM", raising=False)
+    monkeypatch.delenv("PROOFJURY_NO_LLM", raising=False)
 
 
 def test_login_writes_config_and_selects_adapter(monkeypatch, tmp_path):

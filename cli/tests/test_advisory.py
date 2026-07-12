@@ -9,23 +9,23 @@ import json
 import httpx
 import pytest
 
-from proofloop.config import ADVISORY_DEFAULTS, advisory_settings
-from proofloop.gate import resolve_task_ref, run_gate
-from proofloop.hooks import task_from_payload
-from proofloop.judge.advisory import (
+from proofjury.config import ADVISORY_DEFAULTS, advisory_settings
+from proofjury.gate import resolve_task_ref, run_gate
+from proofjury.hooks import task_from_payload
+from proofjury.judge.advisory import (
     AdvisoryFinding,
     AdvisoryInput,
     OpenRouterAdvisoryJudge,
     parse_findings,
 )
-from proofloop.judge.advisory_mock import MockAdvisoryJudge
-from proofloop.memory.schema import ADVISORY_ENTRY_KEYS, CHECK_ENTRY_KEYS
-from proofloop.memory.store import MemoryStore
-from proofloop.session import stamp
+from proofjury.judge.advisory_mock import MockAdvisoryJudge
+from proofjury.memory.schema import ADVISORY_ENTRY_KEYS, CHECK_ENTRY_KEYS
+from proofjury.memory.store import MemoryStore
+from proofjury.session import stamp
 
 
 def _store(root):
-    return MemoryStore(root / ".proofloop")
+    return MemoryStore(root / ".proofjury")
 
 
 def _finding(
@@ -134,7 +134,7 @@ def test_advisory_settings_malformed_values_fall_back():
 
 def test_resolve_task_ref_precedence():
     config = {"session": {"task": "from config"}}
-    env = {"PROOFLOOP_TASK": "from env"}
+    env = {"PROOFJURY_TASK": "from env"}
     assert resolve_task_ref("explicit", env, config) == "explicit"
     assert resolve_task_ref(None, env, config) == "from env"
     assert resolve_task_ref(None, {}, config) == "from config"
@@ -163,7 +163,7 @@ def test_task_ref_lands_in_record_and_context(tmp_repo, scrubbed_env):
     )
     assert result.record.task_ref == "add rate limiting"
     context = json.loads(
-        (tmp_repo.root / ".proofloop" / "runs" / result.record.id / "context.json").read_text()
+        (tmp_repo.root / ".proofjury" / "runs" / result.record.id / "context.json").read_text()
     )
     assert context["task_ref"] == "add rate limiting"
     # and it survives the store roundtrip
@@ -313,7 +313,7 @@ def test_passing_gate_high_confidence_finding_injected(diff_repo, scrubbed_env):
     assert entry["kind"] == "discovery" and entry["tier"] == 4
     assert entry["judge_model_id"] == "mock/advisory"
     assert entry["label"] is None and entry["retraction"] is None
-    assert record.advisory_input.startswith("Proofloop advisory review")
+    assert record.advisory_input.startswith("Proofjury advisory review")
     assert json.loads(record.advisory_output)["findings"]
     assert len(result.agent_notes) == 1
     assert entry["id"] in result.agent_notes[0]
@@ -381,7 +381,7 @@ def test_offline_no_llm_yields_empty_advisories(diff_repo, scrubbed_env):
 
 
 def test_advisory_disabled_in_config_skips_judge(diff_repo, scrubbed_env):
-    diff_repo.write(".proofloop.toml", "[advisory]\nenabled = false\n")
+    diff_repo.write(".proofjury.toml", "[advisory]\nenabled = false\n")
     judge = MockAdvisoryJudge()
     result = _pass_gate(diff_repo, scrubbed_env, advisory_judge=judge)
     assert judge.calls == []
@@ -389,7 +389,7 @@ def test_advisory_disabled_in_config_skips_judge(diff_repo, scrubbed_env):
 
 
 def test_trivial_diff_skips_judge(diff_repo, scrubbed_env):
-    diff_repo.write(".proofloop.toml", "[advisory]\ndiff_min_lines = 500\n")
+    diff_repo.write(".proofjury.toml", "[advisory]\ndiff_min_lines = 500\n")
     judge = MockAdvisoryJudge()
     result = _pass_gate(diff_repo, scrubbed_env, advisory_judge=judge)
     assert judge.calls == []
@@ -422,7 +422,7 @@ def test_tier_5_requires_task_ref(diff_repo, scrubbed_env):
 
 
 def test_tier_mute_in_config(diff_repo, scrubbed_env):
-    diff_repo.write(".proofloop.toml", "[advisory]\ntiers = [4]\n")
+    diff_repo.write(".proofjury.toml", "[advisory]\ntiers = [4]\n")
     judge = MockAdvisoryJudge(
         findings=[
             _finding(concern="tier four", tier=4),
@@ -436,7 +436,7 @@ def test_tier_mute_in_config(diff_repo, scrubbed_env):
 
 
 def test_max_findings_cap(diff_repo, scrubbed_env):
-    diff_repo.write(".proofloop.toml", "[advisory]\nmax_findings = 2\n")
+    diff_repo.write(".proofjury.toml", "[advisory]\nmax_findings = 2\n")
     judge = MockAdvisoryJudge(
         findings=[_finding(concern=f"finding {i}", target=f"f{i}.py:1") for i in range(5)]
     )

@@ -92,9 +92,9 @@ export default function S8Cta() {
         <footer className="mt-28 flex flex-col items-center justify-between gap-3 border-t border-line py-7 text-xs text-faint sm:flex-row">
           <span className="flex items-center gap-1.5 font-mono text-[13px] text-body">
             <GateGlyph className="h-3.5 w-3.5" />
-            proofloop
+            proofjury
           </span>
-          <span>Apache-2.0 · correctness, not security · © 2026 Proofloop</span>
+          <span>Apache-2.0 · correctness, not security · © 2026 Proofjury</span>
         </footer>
       </div>
     </section>

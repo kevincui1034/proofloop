@@ -10,7 +10,7 @@ const FORMSPREE_ACTION = `https://formspree.io/f/${FORMSPREE_FORM_ID}`;
 
 // Kept only as the error-state fallback link.
 const MAILTO =
-  "mailto:kevincui1034@gmail.com?subject=Proofloop%20early%20access";
+  "mailto:kevincui1034@gmail.com?subject=Proofjury%20early%20access";
 
 type FormState = "idle" | "submitting" | "success" | "error";
 

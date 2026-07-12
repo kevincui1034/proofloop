@@ -1,7 +1,7 @@
 """worktree_digest: staged and untracked content must shift the digest."""
 
-from proofloop.checks.tests import check_tests
-from proofloop.session import stamp, worktree_digest
+from proofjury.checks.tests import check_tests
+from proofjury.session import stamp, worktree_digest
 
 
 def test_staged_content_edit_changes_digest(tmp_repo):
@@ -54,11 +54,11 @@ def test_untracked_edit_after_stamp_invalidates_marker(tmp_repo, make_ctx):
     assert result.failure_class == "tests_not_run"
 
 
-def test_proofloop_dir_never_affects_digest(tmp_repo):
+def test_proofjury_dir_never_affects_digest(tmp_repo):
     tmp_repo.write("svc.py", "x = 1\n")
     d1 = worktree_digest(tmp_repo.root)
-    tmp_repo.write(".proofloop/session.json", "{}\n")
-    tmp_repo.write(".proofloop/runs/tests-1.log", "log\n")
+    tmp_repo.write(".proofjury/session.json", "{}\n")
+    tmp_repo.write(".proofjury/runs/tests-1.log", "log\n")
     d2 = worktree_digest(tmp_repo.root)
     assert d1 == d2
 

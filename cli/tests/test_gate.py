@@ -8,12 +8,12 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-import proofloop.cli as cli_module
-from proofloop.cli import app
-from proofloop.gate import run_gate, scrub_text
-from proofloop.judge import DeterministicJudge
-from proofloop.memory.store import MemoryStore
-from proofloop.session import stamp
+import proofjury.cli as cli_module
+from proofjury.cli import app
+from proofjury.gate import run_gate, scrub_text
+from proofjury.judge import DeterministicJudge
+from proofjury.memory.store import MemoryStore
+from proofjury.session import stamp
 
 runner = CliRunner()
 
@@ -23,7 +23,7 @@ def _sentinel_cmd(path):
 
 
 def _store(root):
-    return MemoryStore(root / ".proofloop")
+    return MemoryStore(root / ".proofjury")
 
 
 @pytest.fixture
@@ -121,7 +121,7 @@ def test_every_run_appends_a_record(failing_repo, scrubbed_env):
     records = list(_store(failing_repo.root).iter_records())
     assert len(records) == 2
     assert [r.id for r in records] == ["chk_001", "chk_002"]
-    assert (failing_repo.root / ".proofloop" / "memory.md").exists()
+    assert (failing_repo.root / ".proofjury" / "memory.md").exists()
 
 
 def test_recurrence_sets_recalled_from(failing_repo, scrubbed_env):
@@ -147,7 +147,7 @@ def test_auto_resolution_links_fix_to_failure(failing_repo, scrubbed_env):
 
 def test_proof_files_written_under_context_ref(failing_repo, scrubbed_env):
     result = run_gate(failing_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
-    run_dir = failing_repo.root / ".proofloop" / "runs" / result.record.id
+    run_dir = failing_repo.root / ".proofjury" / "runs" / result.record.id
     for ref in result.record.proof_refs:
         assert (run_dir / ref).exists()
     checks = json.loads((run_dir / "checks.json").read_text())
@@ -166,7 +166,7 @@ def test_env_values_scrubbed_from_persisted_record(tmp_repo, scrubbed_env):
     serialized = json.dumps(result.record.to_dict())
     assert secret_value not in serialized
     assert "[REDACTED]" in result.record.judge_input
-    proof_dir = tmp_repo.root / ".proofloop" / "runs" / result.record.id
+    proof_dir = tmp_repo.root / ".proofjury" / "runs" / result.record.id
     assert secret_value not in (proof_dir / "diff.patch").read_text()
 
 
@@ -216,20 +216,20 @@ def test_guard_cli_requires_command(tmp_repo, monkeypatch):
 
 
 def test_guard_without_sentinel_is_usage_error(failing_repo, monkeypatch):
-    """`proofloop guard deploy vercel --force` must not consume --force as
+    """`proofjury guard deploy vercel --force` must not consume --force as
     guard's own flag (self-force-override) — it exits 64 with guidance."""
     monkeypatch.chdir(failing_repo.root)
     result = runner.invoke(app, ["guard", "deploy", "vercel", "--force"])
     assert result.exit_code == 64
     # the gate never ran: no record was written
-    assert not (failing_repo.root / ".proofloop" / "memory.jsonl").exists()
+    assert not (failing_repo.root / ".proofjury" / "memory.jsonl").exists()
 
 
 def test_run_without_sentinel_is_usage_error(tmp_repo, monkeypatch):
     monkeypatch.chdir(tmp_repo.root)
     result = runner.invoke(app, ["run", "tests", "pytest", "-q"])
     assert result.exit_code == 64
-    assert not (tmp_repo.root / ".proofloop" / "session.json").exists()
+    assert not (tmp_repo.root / ".proofjury" / "session.json").exists()
 
 
 def test_run_unknown_kind_is_usage_error(tmp_repo, monkeypatch):
@@ -306,12 +306,12 @@ def test_run_log_and_session_cmd_scrubbed(tmp_repo, monkeypatch):
     code = f"print({secret!r})"
     result = runner.invoke(app, ["run", "tests", "--", sys.executable, "-c", code])
     assert result.exit_code == 0
-    logs = list((tmp_repo.root / ".proofloop" / "runs").glob("tests-*.log"))
+    logs = list((tmp_repo.root / ".proofjury" / "runs").glob("tests-*.log"))
     assert len(logs) == 1
     log_text = logs[0].read_text()
     assert secret not in log_text
     assert "[REDACTED]" in log_text
-    session = json.loads((tmp_repo.root / ".proofloop" / "session.json").read_text())
+    session = json.loads((tmp_repo.root / ".proofjury" / "session.json").read_text())
     stored_cmd = json.dumps(session["tests"]["cmd"])
     assert secret not in stored_cmd
     assert "[REDACTED]" in stored_cmd
@@ -338,7 +338,7 @@ def test_proof_context_json_scrubs_escaped_env_values(tmp_repo, scrubbed_env):
     result = run_gate(
         tmp_repo.root, "deploy", ["echo", secret], no_exec=True, env=env, render=False
     )
-    ctx_path = tmp_repo.root / ".proofloop" / "runs" / result.record.id / "context.json"
+    ctx_path = tmp_repo.root / ".proofjury" / "runs" / result.record.id / "context.json"
     ctx_text = ctx_path.read_text()
     escaped = json.dumps(secret)[1:-1]  # the JSON-escaped form
     assert secret not in ctx_text
@@ -368,13 +368,13 @@ def test_auto_resolution_resolves_all_open_priors(failing_repo, scrubbed_env):
 
 
 # --------------------------------------------------------------------------
-# repo identity survives remote changes (persisted .proofloop/repo_id)
+# repo identity survives remote changes (persisted .proofjury/repo_id)
 # --------------------------------------------------------------------------
 
 
 def test_repo_id_persisted_across_remote_changes(failing_repo, scrubbed_env):
     first = run_gate(failing_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
-    id_file = failing_repo.root / ".proofloop" / "repo_id"
+    id_file = failing_repo.root / ".proofjury" / "repo_id"
     assert id_file.read_text().strip() == first.record.repo_id
     # adding an origin remote would change the derived id …
     failing_repo.git("remote", "add", "origin", "git@github.com:acme/renamed.git")
@@ -390,8 +390,8 @@ def test_repo_id_persisted_across_remote_changes(failing_repo, scrubbed_env):
 
 
 def test_strong_recall_skips_llm_engine(failing_repo, scrubbed_env, monkeypatch):
-    import proofloop.gate as gate_module
-    from proofloop.judge import MockJudge
+    import proofjury.gate as gate_module
+    from proofjury.judge import MockJudge
 
     first = run_gate(failing_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
 
@@ -407,13 +407,13 @@ def test_strong_recall_skips_llm_engine(failing_repo, scrubbed_env, monkeypatch)
     second = run_gate(failing_repo.root, "deploy", ["true"], env=llm_env, render=False)
     assert second.record.recalled_from == first.record.id
     assert factory_calls == [] and spy.calls == []  # … but never consulted
-    assert second.record.judge_model_id == "deterministic/proofloop-v1"
+    assert second.record.judge_model_id == "deterministic/proofjury-v1"
     assert second.record.diagnosis.startswith(f"Seen before — matches {first.record.id}")
 
 
 def test_engine_consulted_without_strong_recall(failing_repo, scrubbed_env, monkeypatch):
-    import proofloop.gate as gate_module
-    from proofloop.judge import MockJudge
+    import proofjury.gate as gate_module
+    from proofjury.judge import MockJudge
 
     spy = MockJudge()
     monkeypatch.setattr(gate_module, "get_judge", lambda env, root=None: spy)
@@ -424,11 +424,11 @@ def test_engine_consulted_without_strong_recall(failing_repo, scrubbed_env, monk
 
 
 # --------------------------------------------------------------------------
-# discoverability hint: nudge to `proofloop login` only when blocked with a
+# discoverability hint: nudge to `proofjury login` only when blocked with a
 # deterministic diagnosis and no LLM configured
 # --------------------------------------------------------------------------
 
-LOGIN_HINT = "proofloop login"
+LOGIN_HINT = "proofjury login"
 
 
 def _render(root, env, judge=None):

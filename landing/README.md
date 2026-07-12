@@ -1,6 +1,6 @@
-# Proofloop landing page
+# Proofjury landing page
 
-Marketing site for the [Proofloop CLI](../cli) — a correctness gate for
+Marketing site for the [Proofjury CLI](../cli) — a correctness gate for
 AI-written code that blocks unready deploys at the deploy moment. The
 page's job: convert visitors to GitHub stars and early-access emails.
 

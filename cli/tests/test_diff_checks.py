@@ -6,11 +6,11 @@ never fire in the demo workdir or non-git trees.
 
 import pytest
 
-from proofloop.checks.lockfile import check_lockfile
-from proofloop.checks.migrations import check_migrations
-from proofloop.checks.unfinished import check_unfinished
-from proofloop.judge.deterministic import DeterministicJudge
-from proofloop.judge.base import JudgeInput
+from proofjury.checks.lockfile import check_lockfile
+from proofjury.checks.migrations import check_migrations
+from proofjury.checks.unfinished import check_unfinished
+from proofjury.judge.deterministic import DeterministicJudge
+from proofjury.judge.base import JudgeInput
 
 
 @pytest.fixture

@@ -9,8 +9,8 @@ import json
 
 from typer.testing import CliRunner
 
-from proofloop.cli import app
-from proofloop.hooks import (
+from proofjury.cli import app
+from proofjury.hooks import (
     DEFAULT_DEPLOY_PATTERNS,
     FINAL_INSTRUCTION,
     compile_deploy_patterns,
@@ -19,10 +19,10 @@ from proofloop.hooks import (
     get_deploy_patterns,
     handle_hook,
     is_deploy_command,
-    is_proofloop_invocation,
+    is_proofjury_invocation,
 )
-from proofloop.memory.store import MemoryStore
-from proofloop.session import stamp
+from proofjury.memory.store import MemoryStore
+from proofjury.session import stamp
 
 runner = CliRunner()
 
@@ -204,7 +204,7 @@ def test_init_seeds_detected_deploy_scripts(tmp_repo, monkeypatch):
     monkeypatch.chdir(tmp_repo.root)
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0, result.output
-    toml_text = (tmp_repo.root / ".proofloop.toml").read_text()
+    toml_text = (tmp_repo.root / ".proofjury.toml").read_text()
     assert "deploy_patterns_extra" in toml_text
     cfg = tomllib.loads(toml_text)  # generated TOML must parse
     compiled = compile_deploy_patterns(get_deploy_patterns(cfg))
@@ -271,7 +271,7 @@ def test_deploy_passing_gate_emits_no_decision(tmp_repo, scrubbed_env):
     payload = {"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}
     output = handle_hook(payload, tmp_repo.root, scrubbed_env)
     assert output == NO_DECISION
-    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    record = MemoryStore(tmp_repo.root / ".proofjury").get("chk_001")
     assert record is not None and record.gate_passed
 
 
@@ -285,7 +285,7 @@ def test_deny_cites_recall_on_recurrence(tmp_repo, scrubbed_env):
 
 def test_custom_patterns_from_config(tmp_repo, scrubbed_env):
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
-    tmp_repo.write(".proofloop.toml", "[hook]\ndeploy_patterns = ['^make ship$']\n")
+    tmp_repo.write(".proofjury.toml", "[hook]\ndeploy_patterns = ['^make ship$']\n")
     ship = {"tool_name": "Bash", "tool_input": {"command": "make ship"}}
     other = {"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}
     assert _decision(handle_hook(ship, tmp_repo.root, scrubbed_env)) == "deny"
@@ -297,7 +297,7 @@ def test_invalid_config_pattern_dropped_with_warning(tmp_repo, scrubbed_env, cap
     it is dropped with a warning while valid patterns keep working."""
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
     tmp_repo.write(
-        ".proofloop.toml", "[hook]\ndeploy_patterns = ['([', '^make ship$']\n"
+        ".proofjury.toml", "[hook]\ndeploy_patterns = ['([', '^make ship$']\n"
     )
     ls = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
     ship = {"tool_name": "Bash", "tool_input": {"command": "make ship"}}
@@ -310,7 +310,7 @@ def test_invalid_config_pattern_dropped_with_warning(tmp_repo, scrubbed_env, cap
 
 def test_all_invalid_patterns_fall_back_to_defaults(tmp_repo, scrubbed_env, capsys):
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
-    tmp_repo.write(".proofloop.toml", "[hook]\ndeploy_patterns = ['(']\n")
+    tmp_repo.write(".proofjury.toml", "[hook]\ndeploy_patterns = ['(']\n")
     deploy = {"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}
     ls = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
     assert _decision(handle_hook(deploy, tmp_repo.root, scrubbed_env)) == "deny"
@@ -319,13 +319,13 @@ def test_all_invalid_patterns_fall_back_to_defaults(tmp_repo, scrubbed_env, caps
 
 
 def test_toml_template_patterns_mirror_defaults():
-    """The .proofloop.toml template must parse, compile cleanly, and
+    """The .proofjury.toml template must parse, compile cleanly, and
     behave like DEFAULT_DEPLOY_PATTERNS (anchoring + word boundaries)."""
     import tomllib
 
-    from proofloop.hooks import PROOFLOOP_TOML_TEMPLATE, get_deploy_patterns
+    from proofjury.hooks import PROOFJURY_TOML_TEMPLATE, get_deploy_patterns
 
-    config = tomllib.loads(PROOFLOOP_TOML_TEMPLATE)
+    config = tomllib.loads(PROOFJURY_TOML_TEMPLATE)
     patterns = get_deploy_patterns(config)
     assert patterns == DEFAULT_DEPLOY_PATTERNS
     compiled = compile_deploy_patterns(patterns)
@@ -343,29 +343,29 @@ def test_compile_deploy_patterns_drops_only_invalid():
     assert [p.pattern for p in fallback] == DEFAULT_DEPLOY_PATTERNS
 
 
-def test_is_proofloop_invocation():
-    assert is_proofloop_invocation("proofloop guard deploy -- vercel --prod")
-    assert is_proofloop_invocation("  FOO=bar BAZ='q x' proofloop run tests -- pytest")
-    assert is_proofloop_invocation("/usr/local/bin/proofloop hook")
-    assert not is_proofloop_invocation("vercel --prod")
-    assert not is_proofloop_invocation("echo proofloop")
-    assert not is_proofloop_invocation("")
+def test_is_proofjury_invocation():
+    assert is_proofjury_invocation("proofjury guard deploy -- vercel --prod")
+    assert is_proofjury_invocation("  FOO=bar BAZ='q x' proofjury run tests -- pytest")
+    assert is_proofjury_invocation("/usr/local/bin/proofjury hook")
+    assert not is_proofjury_invocation("vercel --prod")
+    assert not is_proofjury_invocation("echo proofjury")
+    assert not is_proofjury_invocation("")
 
 
-def test_proofloop_invocations_never_re_gated(tmp_repo, scrubbed_env):
-    """`proofloop guard deploy -- vercel --prod` matches the vercel pattern;
+def test_proofjury_invocations_never_re_gated(tmp_repo, scrubbed_env):
+    """`proofjury guard deploy -- vercel --prod` matches the vercel pattern;
     re-gating it would double-run the gate and duplicate records."""
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
     commands = [
-        "proofloop guard deploy -- vercel --prod",
-        "FOO=bar proofloop guard deploy -- vercel --prod",
-        "/usr/local/bin/proofloop run tests -- pytest -q",
+        "proofjury guard deploy -- vercel --prod",
+        "FOO=bar proofjury guard deploy -- vercel --prod",
+        "/usr/local/bin/proofjury run tests -- pytest -q",
     ]
     for command in commands:
         payload = {"tool_name": "Bash", "tool_input": {"command": command}}
         assert handle_hook(payload, tmp_repo.root, scrubbed_env) == NO_DECISION, command
     # the hook never ran the gate, so no records were written
-    assert list(MemoryStore(tmp_repo.root / ".proofloop").iter_records()) == []
+    assert list(MemoryStore(tmp_repo.root / ".proofjury").iter_records()) == []
 
 
 def test_hook_cli_reads_stdin_and_prints_no_decision(tmp_repo, monkeypatch):
@@ -398,7 +398,7 @@ def test_hook_persists_exact_command_string(tmp_repo, scrubbed_env):
     output = handle_hook(payload, tmp_repo.root, scrubbed_env)
     assert _decision(output) == "deny"
     context = json.loads(
-        (tmp_repo.root / ".proofloop" / "runs" / "chk_001" / "context.json").read_text()
+        (tmp_repo.root / ".proofjury" / "runs" / "chk_001" / "context.json").read_text()
     )
     assert context["cmd"] == [command]
 
@@ -407,15 +407,15 @@ def test_hook_persists_exact_command_string(tmp_repo, scrubbed_env):
 
 
 def test_cursor_hook_non_deploy_no_decision(tmp_repo, scrubbed_env):
-    from proofloop.hooks import handle_cursor_hook
+    from proofjury.hooks import handle_cursor_hook
 
     payload = {"command": "ls -la", "cwd": str(tmp_repo.root)}
     assert handle_cursor_hook(payload, tmp_repo.root, scrubbed_env) == NO_DECISION
-    assert not (tmp_repo.root / ".proofloop" / "memory.jsonl").exists()
+    assert not (tmp_repo.root / ".proofjury" / "memory.jsonl").exists()
 
 
 def test_cursor_hook_deny_maps_schema(tmp_repo, scrubbed_env):
-    from proofloop.hooks import handle_cursor_hook
+    from proofjury.hooks import handle_cursor_hook
 
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
     payload = {"command": "vercel deploy", "cwd": str(tmp_repo.root)}
@@ -427,28 +427,28 @@ def test_cursor_hook_deny_maps_schema(tmp_repo, scrubbed_env):
     assert "Fix steps:" in output["agent_message"]
     assert output["agent_message"].endswith(FINAL_INSTRUCTION)
     # agent_source lands as cursor on the record
-    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    record = MemoryStore(tmp_repo.root / ".proofjury").get("chk_001")
     assert record.agent_source == "cursor"
 
 
 def test_cursor_hook_pass_emits_empty(tmp_repo, scrubbed_env):
-    from proofloop.hooks import handle_cursor_hook
+    from proofjury.hooks import handle_cursor_hook
 
     tmp_repo.write("svc.py", "x = 1\n")
     stamp(tmp_repo.root, "tests", 0, ["pytest"])
     payload = {"command": "./deploy.sh"}
     assert handle_cursor_hook(payload, tmp_repo.root, scrubbed_env) == NO_DECISION
-    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    record = MemoryStore(tmp_repo.root / ".proofjury").get("chk_001")
     assert record is not None and record.gate_passed
 
 
 def test_cursor_hook_does_not_clobber_agent_source_env(tmp_repo, scrubbed_env):
-    from proofloop.hooks import handle_cursor_hook
+    from proofjury.hooks import handle_cursor_hook
 
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
-    env = {**scrubbed_env, "PROOFLOOP_AGENT_SOURCE": "custom-agent"}
+    env = {**scrubbed_env, "PROOFJURY_AGENT_SOURCE": "custom-agent"}
     handle_cursor_hook({"command": "./deploy.sh"}, tmp_repo.root, env)
-    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    record = MemoryStore(tmp_repo.root / ".proofjury").get("chk_001")
     assert record.agent_source == "custom-agent"
 
 
@@ -469,7 +469,7 @@ def test_cursor_hook_cli_deny(tmp_repo, monkeypatch):
 def test_cursor_hook_internal_error_fails_closed_exit_2(tmp_repo, monkeypatch):
     """Cursor fails OPEN on non-zero exit codes other than 2 — an internal
     error must print the Cursor deny JSON and exit exactly 2."""
-    import proofloop.cli as cli_module
+    import proofjury.cli as cli_module
 
     monkeypatch.chdir(tmp_repo.root)
 
@@ -493,7 +493,7 @@ def test_codex_hook_sets_agent_source(tmp_repo, monkeypatch):
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
     monkeypatch.chdir(tmp_repo.root)
     monkeypatch.delenv("STRIPE_API_KEY", raising=False)
-    monkeypatch.delenv("PROOFLOOP_AGENT_SOURCE", raising=False)
+    monkeypatch.delenv("PROOFJURY_AGENT_SOURCE", raising=False)
     result = runner.invoke(
         app, ["hook", "--agent", "codex"],
         input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}),
@@ -501,7 +501,7 @@ def test_codex_hook_sets_agent_source(tmp_repo, monkeypatch):
     assert result.exit_code == 0
     output = json.loads(result.stdout.strip().splitlines()[-1])
     assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
-    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    record = MemoryStore(tmp_repo.root / ".proofjury").get("chk_001")
     assert record.agent_source == "codex"
 
 
@@ -509,12 +509,12 @@ def test_hook_agent_flag_does_not_override_env(tmp_repo, monkeypatch):
     tmp_repo.write("payments.py", 'import os\nKEY = os.environ["STRIPE_API_KEY"]\n')
     monkeypatch.chdir(tmp_repo.root)
     monkeypatch.delenv("STRIPE_API_KEY", raising=False)
-    monkeypatch.setenv("PROOFLOOP_AGENT_SOURCE", "my-pipeline")
+    monkeypatch.setenv("PROOFJURY_AGENT_SOURCE", "my-pipeline")
     runner.invoke(
         app, ["hook", "--agent", "codex"],
         input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "./deploy.sh"}}),
     )
-    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    record = MemoryStore(tmp_repo.root / ".proofjury").get("chk_001")
     assert record.agent_source == "my-pipeline"
 
 
@@ -525,7 +525,7 @@ def test_hook_rejects_unknown_agent(tmp_repo, monkeypatch):
 
 
 def test_bare_hook_stays_claude_compatible(tmp_repo, monkeypatch):
-    """Existing .claude/settings.json files call `proofloop hook` bare."""
+    """Existing .claude/settings.json files call `proofjury hook` bare."""
     monkeypatch.chdir(tmp_repo.root)
     result = runner.invoke(
         app, ["hook"], input=json.dumps({"tool_input": {"command": "ls"}})

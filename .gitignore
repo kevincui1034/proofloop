@@ -8,8 +8,8 @@ venv/
 dist/
 build/
 
-# Proofloop runtime state (never commit gate runs/memory)
-.proofloop/
+# Proofjury runtime state (never commit gate runs/memory)
+.proofjury/
 
 # Node / Next.js
 node_modules/
@@ -23,6 +23,9 @@ npm-debug.log*
 *.swp
 
 # Internal strategy docs — keep local, out of the public repo
-proofloop-claude-code-handoff-final.md
-proofloop-full-scope.md
+proofjury-claude-code-handoff-final.md
+proofjury-full-scope.md
 .rocketride/
+
+# Claude Code local settings (machine-specific, may contain tokens)
+.claude/settings.local.json

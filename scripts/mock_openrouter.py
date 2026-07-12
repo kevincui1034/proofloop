@@ -29,7 +29,7 @@ RESPONSE = {
                             ),
                             "fix_steps": [
                                 "Set the missing environment variables.",
-                                "Run the tests through proofloop, then re-run the gate.",
+                                "Run the tests through proofjury, then re-run the gate.",
                             ],
                         }
                     )

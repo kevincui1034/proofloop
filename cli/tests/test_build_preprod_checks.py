@@ -2,9 +2,9 @@
 
 import json
 
-from proofloop.checks.build import check_build
-from proofloop.checks.preprod import check_preprod
-from proofloop.session import stamp
+from proofjury.checks.build import check_build
+from proofjury.checks.preprod import check_preprod
+from proofjury.session import stamp
 
 
 def test_build_skipped_when_inapplicable(tmp_repo, make_ctx):
@@ -21,14 +21,14 @@ def test_build_required_by_package_json_script(tmp_repo, make_ctx):
     assert not result.skipped
     assert result.failure_class == "build_failure"
     assert "no build recorded" in result.evidence[0].detail
-    assert "proofloop run build -- npm run build" in result.fix_hint
+    assert "proofjury run build -- npm run build" in result.fix_hint
 
 
 def test_build_required_by_config_command(tmp_repo, make_ctx):
     config = {"commands": {"build": "make build"}}
     result = check_build(make_ctx(tmp_repo.root, config=config))
     assert not result.passed
-    assert "proofloop run build -- make build" in result.fix_hint
+    assert "proofjury run build -- make build" in result.fix_hint
 
 
 def test_build_passes_with_fresh_marker(tmp_repo, make_ctx):
@@ -69,7 +69,7 @@ def test_preprod_fails_when_lint_configured_but_not_run(tmp_repo, make_ctx):
     assert not result.passed
     assert result.failure_class == "preprod_check_skipped"
     assert "lint not run for this worktree" in result.evidence[0].detail
-    assert "proofloop run lint -- ruff check ." in result.fix_hint
+    assert "proofjury run lint -- ruff check ." in result.fix_hint
 
 
 def test_preprod_passes_with_fresh_markers(tmp_repo, make_ctx):

@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "proofloop"
+name = "proofjury"
 version = "0.1.0"
 description = "Correctness gate for AI-written code: block unready deploys with proof, remember every failure."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "Proofloop" }]
+authors = [{ name = "Proofjury" }]
 keywords = ["deploy", "gate", "ai", "correctness", "guardrail"]
 # NOTE: license is an SPDX expression above — do NOT add a `License ::`
 # classifier; modern hatchling forbids mixing the two.
@@ -31,17 +31,17 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://proofloop.dev"
-Source = "https://github.com/kevincui1034/proofloop"
+Homepage = "https://proofjury.com"
+Source = "https://github.com/kevincui1034/proofjury"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
 [project.scripts]
-proofloop = "proofloop.cli:app"
+proofjury = "proofjury.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/proofloop"]
+packages = ["src/proofjury"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

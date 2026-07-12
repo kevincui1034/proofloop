@@ -8,10 +8,10 @@ import json
 
 from typer.testing import CliRunner
 
-from proofloop.checks import resolve_check_profile
-from proofloop.cli import app
-from proofloop.gate import run_gate
-from proofloop.hooks import (
+from proofjury.checks import resolve_check_profile
+from proofjury.cli import app
+from proofjury.gate import run_gate
+from proofjury.hooks import (
     DEFAULT_MERGE_PATTERNS,
     DEFAULT_RELEASE_PATTERNS,
     action_enabled,
@@ -19,8 +19,8 @@ from proofloop.hooks import (
     is_deploy_command,
     match_action,
 )
-from proofloop.memory.store import MemoryStore
-from proofloop.session import stamp
+from proofjury.memory.store import MemoryStore
+from proofjury.session import stamp
 
 runner = CliRunner()
 
@@ -134,7 +134,7 @@ def test_profile_skipped_checks_do_not_auto_resolve(tmp_repo, scrubbed_env):
     )
     assert not merged.blocked
     assert merged.record.resolves is None
-    prior = MemoryStore(tmp_repo.root / ".proofloop").get(blocked.record.id)
+    prior = MemoryStore(tmp_repo.root / ".proofjury").get(blocked.record.id)
     assert prior.resolution is None  # env_vars was never verified fixed
 
 
@@ -147,7 +147,7 @@ def test_hook_denies_release_with_release_wording(tmp_repo, scrubbed_env):
     output = handle_hook(payload, tmp_repo.root, scrubbed_env)
     reason = _reason(output)
     assert "BLOCKED this release command" in reason
-    record = MemoryStore(tmp_repo.root / ".proofloop").get("chk_001")
+    record = MemoryStore(tmp_repo.root / ".proofjury").get("chk_001")
     assert record.action_intercepted == "release"
 
 
@@ -155,12 +155,12 @@ def test_hook_merge_no_decision_by_default(tmp_repo, scrubbed_env):
     tmp_repo.write("payments.py", FAILING_PAYMENTS)
     payload = {"tool_name": "Bash", "tool_input": {"command": "git merge feature-x"}}
     assert handle_hook(payload, tmp_repo.root, scrubbed_env) == NO_DECISION
-    assert not (tmp_repo.root / ".proofloop" / "memory.jsonl").exists()
+    assert not (tmp_repo.root / ".proofjury" / "memory.jsonl").exists()
 
 
 def test_hook_merge_gated_when_opted_in(tmp_repo, scrubbed_env):
     tmp_repo.write("payments.py", FAILING_PAYMENTS)
-    tmp_repo.write(".proofloop.toml", "[hook]\ngate_merges = true\n")
+    tmp_repo.write(".proofjury.toml", "[hook]\ngate_merges = true\n")
     payload = {"tool_name": "Bash", "tool_input": {"command": "git merge feature-x"}}
     output = handle_hook(payload, tmp_repo.root, scrubbed_env)
     reason = _reason(output)
@@ -177,7 +177,7 @@ def test_hook_merge_gated_when_opted_in(tmp_repo, scrubbed_env):
 def test_release_patterns_extra_extends_defaults(tmp_repo, scrubbed_env):
     tmp_repo.write("payments.py", FAILING_PAYMENTS)
     tmp_repo.write(
-        ".proofloop.toml", "[hook]\nrelease_patterns_extra = ['^ship-it$']\n"
+        ".proofjury.toml", "[hook]\nrelease_patterns_extra = ['^ship-it$']\n"
     )
     payload = {"tool_name": "Bash", "tool_input": {"command": "ship-it"}}
     output = handle_hook(payload, tmp_repo.root, scrubbed_env)

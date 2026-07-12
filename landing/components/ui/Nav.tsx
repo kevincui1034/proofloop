@@ -13,14 +13,14 @@ export default function Nav() {
           className="flex items-center gap-2 font-mono text-[15px] font-semibold tracking-tight text-ink"
         >
           <GateGlyph className="h-[17px] w-[17px]" />
-          proofloop
+          proofjury
         </a>
         <div className="flex items-center gap-2 sm:gap-4">
           <a
             href={GITHUB_URL}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="Proofloop on GitHub"
+            aria-label="Proofjury on GitHub"
             className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-body transition-colors hover:text-ink"
           >
             <GitHubIcon />

@@ -1,4 +1,4 @@
-"""tests_not_run / test_failure: marker lifecycle + `proofloop run` stamps."""
+"""tests_not_run / test_failure: marker lifecycle + `proofjury run` stamps."""
 
 import json
 import os
@@ -7,10 +7,10 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
-from proofloop.checks.tests import check_tests
-from proofloop.cli import app
-from proofloop.gate import scrub_text
-from proofloop.session import load_session, stamp
+from proofjury.checks.tests import check_tests
+from proofjury.cli import app
+from proofjury.gate import scrub_text
+from proofjury.session import load_session, stamp
 
 runner = CliRunner()
 
@@ -21,7 +21,7 @@ def test_marker_absent_fails_tests_not_run(tmp_repo, make_ctx):
     assert not result.passed
     assert result.failure_class == "tests_not_run"
     assert "no test run recorded" in result.evidence[0].detail
-    assert result.fix_hint == "Run: proofloop run tests -- pytest"
+    assert result.fix_hint == "Run: proofjury run tests -- pytest"
 
 
 def test_fresh_passing_marker_passes(tmp_repo, make_ctx):
@@ -44,7 +44,7 @@ def test_stale_digest_fails(tmp_repo, make_ctx):
 def test_marker_older_than_24h_fails(tmp_repo, make_ctx):
     tmp_repo.write("svc.py", "x = 1\n")
     stamp(tmp_repo.root, "tests", 0, ["pytest"])
-    session_file = tmp_repo.root / ".proofloop" / "session.json"
+    session_file = tmp_repo.root / ".proofjury" / "session.json"
     data = json.loads(session_file.read_text())
     data["tests"]["ran_at"] = "2020-01-01T00:00:00Z"
     session_file.write_text(json.dumps(data))
@@ -76,7 +76,7 @@ def test_run_command_stamps_and_tees(tmp_repo, make_ctx, monkeypatch):
     # interpreter path can overlap an env value (e.g. setup-python's
     # pythonLocation), so compare against the scrubbed form, not the raw path.
     assert session["tests"]["cmd"][0] == scrub_text(sys.executable, os.environ)
-    logs = list((tmp_repo.root / ".proofloop" / "runs").glob("tests-*.log"))
+    logs = list((tmp_repo.root / ".proofjury" / "runs").glob("tests-*.log"))
     assert len(logs) == 1
     assert "42-ran" in logs[0].read_text()
     # And the gate-facing check now passes.

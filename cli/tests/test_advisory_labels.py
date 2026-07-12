@@ -9,19 +9,19 @@ here can touch the gate decision.
 import pytest
 from typer.testing import CliRunner
 
-from proofloop.cli import app
-from proofloop.gate import run_gate
-from proofloop.judge.advisory import AdvisoryFinding
-from proofloop.judge.advisory_mock import MockAdvisoryJudge
-from proofloop.memory.recall import advisory_signature, rejected_advisory_signatures
-from proofloop.memory.store import MemoryStore
-from proofloop.session import stamp
+from proofjury.cli import app
+from proofjury.gate import run_gate
+from proofjury.judge.advisory import AdvisoryFinding
+from proofjury.judge.advisory_mock import MockAdvisoryJudge
+from proofjury.memory.recall import advisory_signature, rejected_advisory_signatures
+from proofjury.memory.store import MemoryStore
+from proofjury.session import stamp
 
 runner = CliRunner()
 
 
 def _store(root):
-    return MemoryStore(root / ".proofloop")
+    return MemoryStore(root / ".proofjury")
 
 
 def _finding(concern="the webhook send has no retry", confidence=0.9, target="notifications.py:12"):
@@ -211,9 +211,9 @@ def _confirmed_entry(record_id, concern="deploy script ignores curl failures", l
 
 
 def test_graduation_candidate_after_three_confirmations(record_factory, tmp_path):
-    from proofloop.memory.export import advisory_stats
+    from proofjury.memory.export import advisory_stats
 
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     for i in (1, 2, 3):
         rid = f"chk_00{i}"
         store.append(record_factory(rid, advisories=[_confirmed_entry(rid)]))
@@ -258,7 +258,7 @@ def test_render_advisories_shows_every_finding(diff_repo, scrubbed_env):
 
     from rich.console import Console
 
-    from proofloop import ux
+    from proofjury import ux
 
     judge = MockAdvisoryJudge(
         findings=[
@@ -286,7 +286,7 @@ def test_render_advisories_shows_every_finding(diff_repo, scrubbed_env):
 
 
 def test_rejected_advisory_signatures_scoped_to_repo(record_factory, tmp_path):
-    store = MemoryStore(tmp_path / ".proofloop")
+    store = MemoryStore(tmp_path / ".proofjury")
     entry = {
         "id": "chk_001#0", "concern": "no retry on webhook", "kind": "discovery",
         "tier": 4, "confidence": 0.8, "grounded_in": [], "target": "n.py:1",

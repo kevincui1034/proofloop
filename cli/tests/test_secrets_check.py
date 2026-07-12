@@ -2,12 +2,12 @@
 
 Test vectors are assembled from fragments (e.g. ``"sk_" + "live_" + ...``) so no
 contiguous provider-shaped secret literal ever sits in this source file. The
-concatenated *runtime* value is identical, so it still exercises proofloop's
+concatenated *runtime* value is identical, so it still exercises proofjury's
 scanner when written to a temp file — but GitHub push protection and other
 secret scanners see only harmless fragments in the committed source.
 """
 
-from proofloop.checks.secrets import SecretScanner, check_secrets, shannon_entropy
+from proofjury.checks.secrets import SecretScanner, check_secrets, shannon_entropy
 
 # Synthetic, non-real secrets — assembled so the prefix is split from the body.
 _STRIPE = "sk_" + "live_" + "a1B2c3D4e5F6g7H8i9J0k1L2"

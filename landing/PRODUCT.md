@@ -10,7 +10,7 @@ Solo developers (and soon teams) who let coding agents — Claude Code, Codex, C
 
 ## Product Purpose
 
-Proofloop is the correctness gate for AI-written code. It intercepts the deploy command itself, decides with deterministic checks (env vars, tests ran, build passes, no hardcoded secrets, config sanity), uses an LLM only to explain why, emits a reproducible proof record, and remembers every diagnosed failure so recurrence is caught instantly. Neutral across all agents. The landing page's job: make the deploy-moment gap visceral, show the block→fix→allow story, and convert to GitHub stars + early-access emails.
+Proofjury is the correctness gate for AI-written code. It intercepts the deploy command itself, decides with deterministic checks (env vars, tests ran, build passes, no hardcoded secrets, config sanity), uses an LLM only to explain why, emits a reproducible proof record, and remembers every diagnosed failure so recurrence is caught instantly. Neutral across all agents. The landing page's job: make the deploy-moment gap visceral, show the block→fix→allow story, and convert to GitHub stars + early-access emails.
 
 ## Brand Personality
 

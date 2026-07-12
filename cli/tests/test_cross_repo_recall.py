@@ -12,11 +12,11 @@ import subprocess
 import pytest
 from rich.console import Console
 
-from proofloop.gate import run_gate
-from proofloop.memory.recall import is_foreign_prior, recall
-from proofloop.memory.registry import load_registry
-from proofloop.memory.store import MemoryStore
-from proofloop.checks.base import CheckResult, Evidence
+from proofjury.gate import run_gate
+from proofjury.memory.recall import is_foreign_prior, recall
+from proofjury.memory.registry import load_registry
+from proofjury.memory.store import MemoryStore
+from proofjury.checks.base import CheckResult, Evidence
 
 
 def _failure(name="STRIPE_API_KEY"):
@@ -33,8 +33,8 @@ def _failure(name="STRIPE_API_KEY"):
 def _git_init(root):
     for args in (
         ["init", "-q"],
-        ["config", "user.email", "test@proofloop.local"],
-        ["config", "user.name", "proofloop-tests"],
+        ["config", "user.email", "test@proofjury.local"],
+        ["config", "user.name", "proofjury-tests"],
     ):
         subprocess.run(["git", *args], cwd=root, capture_output=True, check=True)
 
@@ -64,8 +64,8 @@ def repo_b(tmp_path_factory):
 
 
 def test_foreign_prior_recalled_with_qualified_id(tmp_path, record_factory):
-    local = MemoryStore(tmp_path / "local" / ".proofloop")
-    other = MemoryStore(tmp_path / "other" / ".proofloop")
+    local = MemoryStore(tmp_path / "local" / ".proofjury")
+    other = MemoryStore(tmp_path / "other" / ".proofjury")
     other.append(record_factory("chk_007", repo_id="repo-b"))
     priors = recall(local, "repo-a", [_failure()], foreign=[("repo-b", other)])
     assert [p.id for p in priors] == ["repo-b:chk_007"]
@@ -73,8 +73,8 @@ def test_foreign_prior_recalled_with_qualified_id(tmp_path, record_factory):
 
 
 def test_local_prior_always_outranks_foreign(tmp_path, record_factory):
-    local = MemoryStore(tmp_path / "local" / ".proofloop")
-    other = MemoryStore(tmp_path / "other" / ".proofloop")
+    local = MemoryStore(tmp_path / "local" / ".proofjury")
+    other = MemoryStore(tmp_path / "other" / ".proofjury")
     # Local prior: zero token overlap (different env var), old.
     local.append(
         record_factory(
@@ -100,8 +100,8 @@ def test_local_prior_always_outranks_foreign(tmp_path, record_factory):
 
 
 def test_foreign_false_positive_excluded(tmp_path, record_factory):
-    local = MemoryStore(tmp_path / "local" / ".proofloop")
-    other = MemoryStore(tmp_path / "other" / ".proofloop")
+    local = MemoryStore(tmp_path / "local" / ".proofjury")
+    other = MemoryStore(tmp_path / "other" / ".proofjury")
     other.append(
         record_factory(
             "chk_003",
@@ -113,9 +113,9 @@ def test_foreign_false_positive_excluded(tmp_path, record_factory):
 
 
 def test_corrupt_foreign_store_never_poisons_recall(tmp_path, record_factory):
-    local = MemoryStore(tmp_path / "local" / ".proofloop")
+    local = MemoryStore(tmp_path / "local" / ".proofjury")
     local.append(record_factory("chk_001", repo_id="repo-a"))
-    broken_root = tmp_path / "broken" / ".proofloop"
+    broken_root = tmp_path / "broken" / ".proofjury"
     broken_root.mkdir(parents=True)
     (broken_root / "memory.jsonl").write_text('{"id": "chk_x"}\nnot json at all\n')
     priors = recall(
@@ -125,7 +125,7 @@ def test_corrupt_foreign_store_never_poisons_recall(tmp_path, record_factory):
 
 
 def test_no_foreign_arg_is_todays_behavior(tmp_path, record_factory):
-    local = MemoryStore(tmp_path / "local" / ".proofloop")
+    local = MemoryStore(tmp_path / "local" / ".proofjury")
     local.append(record_factory("chk_001", repo_id="repo-a"))
     assert [p.id for p in recall(local, "repo-a", [_failure()])] == ["chk_001"]
 
@@ -149,7 +149,7 @@ def test_gate_recalls_across_repos(repo_a, repo_b, scrubbed_env):
 
 def test_foreign_prior_never_strong_matches(repo_a, repo_b, scrubbed_env):
     """A byte-identical foreign failure must NOT short-circuit the judge."""
-    from proofloop.judge import MockJudge
+    from proofjury.judge import MockJudge
 
     _block(repo_a, scrubbed_env)
     spy = MockJudge()
@@ -171,21 +171,21 @@ def test_deterministic_judge_names_the_foreign_repo(repo_a, repo_b, scrubbed_env
 
 def test_config_kill_switch_disables_and_deregisters(repo_a, repo_b, scrubbed_env):
     _block(repo_a, scrubbed_env)
-    (repo_b / ".proofloop.toml").write_text("[memory]\ncross_repo = false\n")
+    (repo_b / ".proofjury.toml").write_text("[memory]\ncross_repo = false\n")
     result = _block(repo_b, scrubbed_env)
     assert result.blocked
     assert result.record.recalled_from is None
     registered = load_registry(scrubbed_env)["repos"]
-    assert str((repo_b / ".proofloop").resolve()) not in registered
-    assert str((repo_a / ".proofloop").resolve()) in registered
+    assert str((repo_b / ".proofjury").resolve()) not in registered
+    assert str((repo_a / ".proofjury").resolve()) in registered
 
 
 def test_env_kill_switch_disables(repo_a, repo_b, scrubbed_env):
     _block(repo_a, scrubbed_env)
-    env = dict(scrubbed_env, PROOFLOOP_NO_CROSS_REPO="1")
+    env = dict(scrubbed_env, PROOFJURY_NO_CROSS_REPO="1")
     result = _block(repo_b, env)
     assert result.record.recalled_from is None
-    assert str((repo_b / ".proofloop").resolve()) not in load_registry(env)["repos"]
+    assert str((repo_b / ".proofjury").resolve()) not in load_registry(env)["repos"]
 
 
 def test_local_prior_still_wins_recalled_from(repo_a, repo_b, scrubbed_env):
@@ -200,11 +200,11 @@ def test_local_prior_still_wins_recalled_from(repo_a, repo_b, scrubbed_env):
 
 
 def test_stats_count_cross_repo(repo_a, repo_b, scrubbed_env):
-    from proofloop.memory.export import stats
+    from proofjury.memory.export import stats
 
     _block(repo_a, scrubbed_env)
     _block(repo_b, scrubbed_env)
-    store_b = MemoryStore(repo_b / ".proofloop")
+    store_b = MemoryStore(repo_b / ".proofjury")
     data = stats(store_b, store_b.root / "ledger.jsonl", env=scrubbed_env)
     assert data["cross_repo"] == {"registered_repos": 2, "recall_hits": 1}
 
@@ -212,7 +212,7 @@ def test_stats_count_cross_repo(repo_a, repo_b, scrubbed_env):
 def test_memory_stats_json_exposes_cross_repo(repo_a, repo_b, scrubbed_env, monkeypatch):
     from typer.testing import CliRunner
 
-    from proofloop.cli import app
+    from proofjury.cli import app
 
     # Align the gate's registry env with what the CLI will read (os.environ,
     # whose HOME the autouse fixture already points at a per-test tmp dir).
@@ -230,7 +230,7 @@ def test_memory_stats_json_exposes_cross_repo(repo_a, repo_b, scrubbed_env, monk
 def test_memory_repos_lists_registered_stores(repo_a, repo_b, scrubbed_env, monkeypatch):
     from typer.testing import CliRunner
 
-    from proofloop.cli import app
+    from proofjury.cli import app
 
     env = {"HOME": os.environ["HOME"], "PATH": scrubbed_env["PATH"]}
     _block(repo_a, env)

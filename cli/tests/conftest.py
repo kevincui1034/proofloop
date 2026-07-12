@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from proofloop.checks.base import CheckContext
-from proofloop.context import iter_source_files, load_config
-from proofloop.memory.schema import MemoryRecord
-from proofloop.session import load_session, worktree_digest
+from proofjury.checks.base import CheckContext
+from proofjury.context import iter_source_files, load_config
+from proofjury.memory.schema import MemoryRecord
+from proofjury.session import load_session, worktree_digest
 
 
 class Repo:
@@ -44,7 +44,7 @@ def _offline_judge(monkeypatch, tmp_path):
     Also isolates the user-level judge config from the developer's real
     ~/.config so tests never read a real key and are reproducible anywhere.
     """
-    monkeypatch.setenv("PROOFLOOP_NO_LLM", "1")
+    monkeypatch.setenv("PROOFJURY_NO_LLM", "1")
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
@@ -52,8 +52,8 @@ def _offline_judge(monkeypatch, tmp_path):
         "OPENROUTER_API_KEY",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
-        "PROOFLOOP_JUDGE_PROVIDER",
-        "PROOFLOOP_JUDGE_MODEL",
+        "PROOFJURY_JUDGE_PROVIDER",
+        "PROOFJURY_JUDGE_MODEL",
         "XDG_CONFIG_HOME",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -64,8 +64,8 @@ def tmp_repo(tmp_path: Path) -> Repo:
     """A temp dir initialized as a git repo (identity configured)."""
     repo = Repo(tmp_path)
     repo.git("init", "-q")
-    repo.git("config", "user.email", "test@proofloop.local")
-    repo.git("config", "user.name", "proofloop-tests")
+    repo.git("config", "user.email", "test@proofjury.local")
+    repo.git("config", "user.name", "proofjury-tests")
     return repo
 
 
@@ -78,7 +78,7 @@ def scrubbed_env(tmp_path_factory) -> dict[str, str]:
     let tests recall each other's stores cross-repo, and a HOME inside
     the repo root would enter the worktree digest and re-arm tests_not_run.
     """
-    home = tmp_path_factory.mktemp("proofloop-home")
+    home = tmp_path_factory.mktemp("proofjury-home")
     return {"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin")}
 
 
@@ -130,7 +130,7 @@ def record_factory():
             created_at=created_at,
             action_intercepted="deploy",
             agent_source="unknown",
-            context_ref=f".proofloop/runs/{record_id}/",
+            context_ref=f".proofjury/runs/{record_id}/",
             checks=checks,
             gate_passed=gate_passed,
             diagnosis="diagnosis text",
@@ -138,7 +138,7 @@ def record_factory():
             judge_output='{"diagnosis": "d", "fix_steps": []}',
             proof_refs=["checks.json"],
             recalled_from=None,
-            judge_model_id="deterministic/proofloop-v1",
+            judge_model_id="deterministic/proofjury-v1",
             resolution=None,
         )
         base.update(overrides)

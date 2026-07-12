@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from proofloop.memory import registry
+from proofjury.memory import registry
 
 
 def _env(tmp_path, **extra):
@@ -15,7 +15,7 @@ def _env(tmp_path, **extra):
 
 
 def _store_root(tmp_path, name, with_jsonl=True):
-    root = tmp_path / name / ".proofloop"
+    root = tmp_path / name / ".proofjury"
     root.mkdir(parents=True)
     if with_jsonl:
         (root / "memory.jsonl").write_text("")
@@ -114,11 +114,11 @@ def test_register_write_failure_is_swallowed(tmp_path):
 def test_registry_path_xdg_and_home(tmp_path):
     assert (
         registry.registry_path({"XDG_CONFIG_HOME": str(tmp_path / "xdg")})
-        == tmp_path / "xdg" / "proofloop" / "registry.json"
+        == tmp_path / "xdg" / "proofjury" / "registry.json"
     )
     assert (
         registry.registry_path({"HOME": str(tmp_path / "home")})
-        == tmp_path / "home" / ".config" / "proofloop" / "registry.json"
+        == tmp_path / "home" / ".config" / "proofjury" / "registry.json"
     )
 
 
