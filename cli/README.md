@@ -18,14 +18,22 @@ record, and — on recurrence — an instant citation of the prior diagnosis
 ## Install
 
 ```bash
-# from GitHub (Python 3.11+)
+# user-wide (Python 3.11+) — PyPI release imminent:
+uv tool install proofjury        # or: pipx install proofjury
+
+# until then, straight from GitHub:
 pip install "git+https://github.com/kevincui1034/proofjury.git#subdirectory=cli"
 
 # or, working in a clone:
 pip install -e 'cli[dev]'        # includes the test extras
 
-proofjury init                   # wire up .proofjury/, agent hooks, config
+proofjury init                   # wire up .proofjury/, agent hooks, AGENTS.md, config
 ```
+
+Prefer a user-wide install (`uv tool install` / `pipx`) over a project venv:
+GUI-launched agents don't inherit a shell-activated venv PATH, and the hook
+files reference a bare `proofjury` that must resolve for them.
+`proofjury status` verifies this.
 
 Requires Python 3.11+. Runtime deps: typer, rich, httpx.
 
@@ -56,7 +64,8 @@ proofjury guard deploy -- ./deploy.sh
 | `proofjury memory list` / `show <id>` | Inspect the memory. |
 | `proofjury memory export` | Emit the records as training-ready JSONL (each row gets a computed `label`). `--labeled-only`, `--failure-class X`, `--dedupe`, `-o PATH`. |
 | `proofjury memory stats` | Dataset health metrics + judge spend from the cost ledger. `--json`. |
-| `proofjury init` | Create `.proofjury/`, write the Claude Code PreToolUse hook, `.proofjury.toml`, print the AGENTS.md snippet. |
+| `proofjury init` | Create `.proofjury/`, write the agent hooks, `.proofjury.toml`, and the gate instructions into `AGENTS.md`/`CLAUDE.md` (marker-delimited; `--no-agents-md` prints them instead). |
+| `proofjury status` | Read-only gate-readiness report: setup, hook wiring, PATH resolution, run stamps, memory size. Always exits 0. |
 
 ### Exit codes
 
@@ -80,7 +89,7 @@ proofjury guard deploy -- ./deploy.sh
 | manifest changed without its lockfile | `lockfile_drift` |
 | TODO/FIXME/NotImplementedError in newly added lines | `unfinished_work` |
 
-See [TAXONOMY.md](TAXONOMY.md) for the open failure-class spec.
+See [TAXONOMY.md](https://github.com/kevincui1034/proofjury/blob/main/cli/TAXONOMY.md) for the open failure-class spec.
 
 ## The judge (offline-first)
 
@@ -249,8 +258,11 @@ shell commands. A failing gate answers with a **deny** whose reason contains
 the failed checks, evidence, and exact fix steps — so the agent
 self-corrects. Everything else (non-deploy commands, passing gates) gets
 **no decision**, leaving the agent's normal permission flow untouched — the
-hook never auto-approves. For all agents, add the snippet from
-[AGENTS.md](AGENTS.md) to your repo.
+hook never auto-approves. `init` also writes the natural-language gate
+instructions into your repo's `AGENTS.md` (created if missing) and, when it
+already exists, `CLAUDE.md` — between `<!-- proofjury:start -->` /
+`<!-- proofjury:end -->` markers, so re-running `init` refreshes them
+without touching your own content. Opt out with `--no-agents-md`.
 
 ### Hook wiring per agent
 
@@ -268,10 +280,12 @@ Caveats worth knowing:
 
 - **Codex trust:** project-local hooks are inert until you trust the folder —
   run `codex` once and accept the prompt. Codex's streaming exec path can
-  bypass hooks, so keep the AGENTS.md snippet for full Codex coverage.
-- **Cursor + virtualenvs:** GUI-launched Cursor doesn't inherit a
-  shell-activated venv PATH. Install proofjury user-wide (`pipx install
-  proofjury`) or put the absolute path in `.cursor/hooks.json`.
+  bypass hooks, so keep the AGENTS.md gate instructions for full Codex
+  coverage.
+- **GUI agents + virtualenvs:** GUI-launched agents (Cursor especially) don't
+  inherit a shell-activated venv PATH. Install proofjury user-wide
+  (`uv tool install proofjury` or `pipx install proofjury`);
+  `proofjury status` reports whether the hook command resolves.
 - **Cursor exit semantics:** exit 2 blocks; other non-zero exits fail open —
   proofjury's internal-error path therefore denies with exit 2.
 

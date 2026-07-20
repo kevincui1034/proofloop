@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import { GITHUB_URL, GitHubIcon, GateGlyph } from "@/components/ui/brand";
 import EarlyAccessForm from "@/components/ui/EarlyAccessForm";
+import InstallBlock from "@/components/ui/InstallBlock";
 import Stamp from "@/components/ui/Stamp";
 import { gsap, useGSAP } from "@/components/experience/gsap-setup";
 
@@ -34,7 +35,12 @@ export default function S8Cta() {
             ease: "power4.in",
           })
           .from(
-            [q('[data-s8="title"]'), q('[data-s8="sub"]'), q('[data-s8="actions"]')],
+            [
+              q('[data-s8="title"]'),
+              q('[data-s8="sub"]'),
+              q('[data-s8="install"]'),
+              q('[data-s8="actions"]'),
+            ],
             {
               autoAlpha: 0,
               y: 26,
@@ -73,9 +79,12 @@ export default function S8Cta() {
           One command between your agent and production. Open source — and it
           gets smarter with every catch.
         </p>
+        <div data-s8="install">
+          <InstallBlock />
+        </div>
         <div
           data-s8="actions"
-          className="mt-10 flex flex-wrap items-center justify-center gap-3"
+          className="mt-8 flex flex-wrap items-center justify-center gap-3"
         >
           <a
             href={GITHUB_URL}

@@ -126,3 +126,15 @@ export const MEMORY_RECORDS: MemoryRecord[] = [
 
 export const RECALL_QUOTE =
   "Seen before — matches chk_001: same STRIPE_API_KEY failure.";
+
+// Install block (S8). Until the PyPI release lands, the git+https line is
+// primary; flip `lines` to ["uv tool install proofjury", "proofjury init"]
+// after the v0.1.0 publish.
+export const INSTALL = {
+  heading: "Two commands. Any repo.",
+  lines: [
+    'pip install "git+https://github.com/kevincui1034/proofjury.git#subdirectory=cli"',
+    "proofjury init",
+  ],
+  note: "Python 3.11+ · runs fully offline · Apache-2.0",
+};
