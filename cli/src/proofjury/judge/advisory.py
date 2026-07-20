@@ -82,6 +82,9 @@ class AdvisoryInput:
     results: list[CheckResult] = field(default_factory=list)
     priors: list[MemoryRecord] = field(default_factory=list)
     rejected_concerns: list[str] = field(default_factory=list)
+    #: Deterministic blast-radius line from the reverse-import graph
+    #: (impact.py) — empty when no changed file has dependents.
+    impact_summary: str = ""
 
     def to_prompt_text(self) -> str:
         lines = [
@@ -102,6 +105,12 @@ class AdvisoryInput:
                     f"{result.evidence_str()}"
                 )
         lines += ["", "Git summary:", self.git_summary or "(unavailable)", ""]
+        if self.impact_summary:
+            lines += [
+                "Blast radius (deterministic reverse-import graph):",
+                self.impact_summary,
+                "",
+            ]
         lines.append("Prior records in this repo (with outcome labels):")
         if self.priors:
             for prior in self.priors:

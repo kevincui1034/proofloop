@@ -41,7 +41,14 @@ from .hooks import (
     handle_hook,
 )
 from .memory.store import MemoryStore
-from .session import now_iso, stamp
+from .session import (
+    MAX_MARKER_AGE_HOURS,
+    load_session,
+    marker_status,
+    now_iso,
+    stamp,
+    worktree_digest,
+)
 
 try:  # typer >= 0.16 vendors click as typer._click
     from typer._click import exceptions as click_exceptions
@@ -176,6 +183,14 @@ def guard(
             fg=typer.colors.RED,
         )
         raise typer.Exit(EXIT_INTERNAL_ERROR)
+    try:
+        # Best-effort post-run sync — firewalled like the advisory judge:
+        # it must never change the exit code, output, or spawn behavior.
+        from .sync import sync_after_gate
+
+        sync_after_gate(Path.cwd(), os.environ)
+    except Exception:
+        pass
     raise typer.Exit(result.exit_code)
 
 
@@ -465,6 +480,180 @@ def logout() -> None:
 
 
 # --------------------------------------------------------------------------
+# connect / disconnect / sync — opt-in hosted dashboard
+# --------------------------------------------------------------------------
+
+
+@app.command()
+def connect(
+    endpoint: str = typer.Option(
+        None,
+        "--endpoint",
+        help="Dashboard API base (dev/test override; default app.proofjury.com).",
+    ),
+    no_open: bool = typer.Option(
+        False, "--no-open", help="Don't try to open the approval page in a browser."
+    ),
+) -> None:
+    """Connect this machine to your hosted dashboard (device-code flow).
+
+    Prints a URL + code; approve it in the browser while logged in. The
+    token lands in ~/.config/proofjury/config.toml (0600). After that,
+    every gate run best-effort syncs its scrubbed record — sync never
+    blocks, slows, or fails the gate. Undo with `proofjury disconnect`;
+    web-made advisory labels reach your agent on the next gate run.
+    """
+    import time as time_module
+
+    from .config import DEFAULT_SYNC_ENDPOINT, save_sync_config
+    from .sync import SyncClient, drain, repo_id_of
+
+    console = Console(highlight=False)
+    base = (
+        os.environ.get("PROOFJURY_SYNC_URL") or endpoint or DEFAULT_SYNC_ENDPOINT
+    ).rstrip("/")
+    client = SyncClient(None, base)
+    try:
+        code = client.request_device_code()
+    except Exception as exc:
+        _fail(f"cannot reach {base}: {exc}", 1)
+
+    user_code = code["user_code"]
+    approve_url = f"{code['verification_uri']}?code={user_code}"
+    console.print(f"Visit [bold]{code['verification_uri']}[/bold]")
+    console.print(f"and enter code [bold]{user_code}[/bold]")
+    if not no_open:
+        try:  # best-effort convenience only
+            import webbrowser
+
+            webbrowser.open(approve_url)
+        except Exception:
+            pass
+
+    interval = float(code.get("interval", 5))
+    deadline = time_module.monotonic() + float(code.get("expires_in", 900))
+    console.print("waiting for approval…", style="dim")
+    while time_module.monotonic() < deadline:
+        time_module.sleep(interval)
+        try:
+            result = client.poll_device_token(code["device_code"])
+        except Exception:
+            continue  # transient network error — keep polling
+        status = result.get("status")
+        if status == "pending":
+            continue
+        if status == "slow_down":
+            interval += 2
+            continue
+        if status == "ok":
+            path = save_sync_config(
+                result["token"],
+                result.get("token_id", ""),
+                endpoint=base,
+                env=os.environ,
+            )
+            login_name = result.get("user_login") or "you"
+            console.print(f"✓ connected as {login_name} → {path} (mode 0600)")
+            console.print(f"  token: {_mask_key(result['token'])}")
+            # First drain, so the repo shows up immediately (best-effort).
+            store = _store()
+            repo_id = repo_id_of(store)
+            if repo_id is not None:
+                try:
+                    pushed = drain(
+                        store, SyncClient(result["token"], base), repo_id, limit=None
+                    )
+                    if pushed:
+                        console.print(f"  pushed {pushed} existing record(s)")
+                except Exception:
+                    pass  # auto-sync will retry after the next gate run
+            return
+        _fail(f"device code {status} — run `proofjury connect` again", 1)
+    _fail("approval timed out — run `proofjury connect` again", 1)
+
+
+@app.command()
+def disconnect() -> None:
+    """Disconnect from the hosted dashboard and revoke this machine's token."""
+    from .config import clear_sync_config, resolve_sync
+    from .sync import SyncClient
+
+    console = Console(highlight=False)
+    settings = resolve_sync(os.environ)
+    if settings is not None:
+        try:  # best-effort server-side revoke; local clear happens regardless
+            SyncClient(settings["token"], settings["endpoint"]).revoke()
+        except Exception:
+            pass
+    removed = clear_sync_config(env=os.environ)
+    if removed is not None:
+        console.print(f"✓ disconnected → {config_path(os.environ)}")
+    else:
+        console.print("not connected", style="dim")
+
+
+@app.command("sync")
+def sync_cmd(
+    status_only: bool = typer.Option(
+        False, "--status", help="Show sync state without touching the network."
+    ),
+) -> None:
+    """Push unsynced gate records and pull web-made labels — manually.
+
+    Exit 0 even on network failure: sync must never be a failing gate in
+    scripts. Auto-sync already runs after each gate; this drains everything.
+    """
+    from .config import resolve_sync
+    from .sync import (
+        SyncClient,
+        drain,
+        load_state,
+        pending_count,
+        pull_labels_and_apply,
+        repo_id_of,
+    )
+
+    console = Console(highlight=False)
+    settings = resolve_sync(os.environ)
+    store = _store()
+
+    if status_only:
+        if settings is None:
+            console.print("sync: disabled (run `proofjury connect`)", style="dim")
+            return
+        state = load_state(store.root)
+        console.print(f"sync: enabled → {settings['endpoint']}")
+        console.print(
+            f"  pending records: {pending_count(store)} · "
+            f"label cursor: {state.get('label_cursor', 0)}"
+        )
+        return
+
+    if settings is None:
+        console.print("sync: disabled (run `proofjury connect`)", style="dim")
+        return
+    repo_id = repo_id_of(store)
+    if repo_id is None:
+        console.print("nothing to sync (no gate records yet)", style="dim")
+        return
+    client = SyncClient(settings["token"], settings["endpoint"])
+    pulled = 0
+    try:
+        pulled = pull_labels_and_apply(store, client, repo_id)
+    except Exception as exc:
+        console.print(f"  (label pull failed: {exc})", style="dim")
+    try:
+        pushed = drain(store, client, repo_id, limit=None)
+    except Exception as exc:
+        console.print(f"  (push failed: {exc})", style="dim")
+        console.print(
+            f"pushed 0, pulled {pulled} label event(s) — will retry next run"
+        )
+        return
+    console.print(f"pushed {pushed}, pulled {pulled} label event(s)")
+
+
+# --------------------------------------------------------------------------
 # memory
 # --------------------------------------------------------------------------
 
@@ -662,6 +851,146 @@ def memory_stats(
 
 
 # --------------------------------------------------------------------------
+# status
+# --------------------------------------------------------------------------
+
+
+def _hook_file_wired(path: Path) -> bool | None:
+    """True when a hook file references ``proofjury hook``; None when the
+    file is missing or unparseable. Structure-agnostic walk so it covers
+    the Claude/Codex nested shape and Cursor's flat entries alike."""
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError:
+        return None
+
+    def walk(node: object) -> bool:
+        if isinstance(node, dict):
+            cmd = node.get("command")
+            if isinstance(cmd, str) and "proofjury hook" in cmd:
+                return True
+            return any(walk(v) for v in node.values())
+        if isinstance(node, list):
+            return any(walk(v) for v in node)
+        return False
+
+    return walk(data)
+
+
+def _suggest_test_command(root: Path) -> str:
+    """Cheap guess at this repo's test command for printed hints."""
+    pkg = root / "package.json"
+    if pkg.is_file():
+        try:
+            scripts = json.loads(pkg.read_text(encoding="utf-8")).get("scripts", {})
+            if isinstance(scripts, dict) and "test" in scripts:
+                return "npm test"
+        except (json.JSONDecodeError, OSError):
+            pass
+    if any(
+        (root / marker).exists()
+        for marker in ("pytest.ini", "conftest.py", "pyproject.toml", "setup.cfg")
+    ):
+        return "pytest"
+    return "<your test command>"
+
+
+_MARKER_STATE_TEXT = {
+    "stale_age": f"stale (older than {MAX_MARKER_AGE_HOURS}h) — re-run to re-stamp",
+    "stale_digest": "code changed since the stamp — re-run to re-stamp",
+    "failed": "last run FAILED — the gate treats it as not run",
+}
+
+
+@app.command()
+def status() -> None:
+    """Gate readiness for this repo: setup, hooks, PATH, run stamps, memory.
+
+    Informational only — always exits 0 and never changes state.
+    """
+    root = Path.cwd()
+    console = Console(highlight=False)
+
+    console.print("[bold]Setup[/bold]")
+    setup_items = [
+        (".proofjury/", (root / ".proofjury").is_dir()),
+        (".proofjury.toml", (root / ".proofjury.toml").is_file()),
+    ]
+    agents_md = root / "AGENTS.md"
+    setup_items.append(
+        (
+            "AGENTS.md gate instructions",
+            agents_md.is_file()
+            and AGENTS_MARKER_START in agents_md.read_text(encoding="utf-8"),
+        )
+    )
+    for name, ok in setup_items:
+        if ok:
+            console.print(f"  ✓ {name}")
+        else:
+            console.print(f"  ✗ {name} missing — run: proofjury init", style="yellow")
+
+    console.print("\n[bold]Hooks[/bold]")
+    detected = detect_installed_agents(root)
+    hook_files = [
+        ("claude", root / ".claude" / "settings.json"),
+        ("cursor", root / ".cursor" / "hooks.json"),
+        ("codex", root / ".codex" / "hooks.json"),
+    ]
+    for agent, path in hook_files:
+        wired = _hook_file_wired(path)
+        tag = " (detected)" if agent in detected else ""
+        if wired:
+            console.print(f"  ✓ {agent}{tag}: {path.relative_to(root)} wired")
+        elif agent in detected or wired is False:
+            console.print(
+                f"  ✗ {agent}{tag}: not wired — run: proofjury init", style="yellow"
+            )
+        else:
+            console.print(f"  · {agent}: not detected", style="dim")
+
+    console.print("\n[bold]PATH[/bold]")
+    warning = _path_resolution_warning()
+    if warning:
+        console.print(f"  ✗ {warning}", style="yellow")
+    else:
+        console.print("  ✓ proofjury resolves user-wide")
+
+    console.print("\n[bold]Gate readiness[/bold]")
+    session = load_session(root)
+    digest = worktree_digest(root)
+    for kind in RUN_KINDS:
+        state, marker = marker_status(session, kind, digest)
+        if state == "fresh":
+            console.print(f"  ✓ {kind}: fresh (stamped {marker['ran_at']})")
+        elif state == "missing":
+            if kind == "tests":
+                console.print(
+                    "  ✗ tests: NOT STAMPED — the next deploy will block on "
+                    "tests_not_run; run: proofjury run tests -- "
+                    f"{_suggest_test_command(root)}",
+                    style="yellow",
+                )
+            else:
+                console.print(f"  · {kind}: not stamped", style="dim")
+        else:
+            console.print(
+                f"  ✗ {kind}: {_MARKER_STATE_TEXT[state]}; run: proofjury run "
+                f"{kind} -- <cmd>",
+                style="yellow",
+            )
+
+    console.print("\n[bold]Memory[/bold]")
+    if (root / ".proofjury").is_dir():
+        count = sum(1 for _ in _store().iter_records())
+        console.print(f"  {count} record(s) in .proofjury/memory.jsonl")
+    else:
+        console.print("  no store yet", style="dim")
+
+
+# --------------------------------------------------------------------------
 # init
 # --------------------------------------------------------------------------
 
@@ -765,21 +1094,112 @@ def _merge_cursor_hooks(root: Path) -> str:
     return f"wrote beforeShellExecution hook → {hooks_path}"
 
 
-def _venv_path_warning() -> str | None:
-    """Warn when the proofjury on PATH lives inside a virtualenv.
+AGENTS_MARKER_START = "<!-- proofjury:start -->"
+AGENTS_MARKER_END = "<!-- proofjury:end -->"
 
-    GUI-launched agents (Cursor especially) don't inherit a shell-activated
-    venv PATH, so the hook command would silently not resolve.
+
+def _agents_block() -> str:
+    return f"{AGENTS_MARKER_START}\n{AGENTS_SNIPPET}{AGENTS_MARKER_END}"
+
+
+def _merge_marker_block(path: Path, create: bool) -> str | None:
+    """Write/refresh the marker-delimited gate snippet in one instructions file.
+
+    Between-marker content is replaced on every run so snippet upgrades
+    flow through re-running ``proofjury init``. Returns a status line, or
+    None when the file is intentionally left alone (missing with
+    ``create=False``, or a CLAUDE.md that imports AGENTS.md).
+    """
+    block = _agents_block()
+    if not path.is_file():
+        if not create:
+            return None
+        path.write_text(block + "\n", encoding="utf-8")
+        return f"wrote gate instructions → {path.name}"
+    text = path.read_text(encoding="utf-8")
+    has_start = AGENTS_MARKER_START in text
+    has_end = AGENTS_MARKER_END in text
+    if has_start and has_end:
+        start = text.index(AGENTS_MARKER_START)
+        end = text.index(AGENTS_MARKER_END) + len(AGENTS_MARKER_END)
+        if end <= start:
+            return f"skipped {path.name} (proofjury marker block is mangled — not clobbering)"
+        updated = text[:start] + block + text[end:]
+        if updated == text:
+            return f"{path.name} already wired (gate instructions present)"
+        path.write_text(updated, encoding="utf-8")
+        return f"refreshed gate instructions → {path.name}"
+    if has_start or has_end:
+        return f"skipped {path.name} (proofjury marker block is mangled — not clobbering)"
+    if not create and "@AGENTS.md" in text:
+        return f"{path.name} imports AGENTS.md (left untouched)"
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += "\n" + block + "\n"
+    path.write_text(text, encoding="utf-8")
+    return f"wrote gate instructions → {path.name}"
+
+
+def _merge_agents_snippet(root: Path) -> list[str]:
+    """Write the gate snippet into AGENTS.md (created if missing) and, when
+    it already exists and doesn't import AGENTS.md, CLAUDE.md too."""
+    lines = []
+    for name, create in (("AGENTS.md", True), ("CLAUDE.md", False)):
+        status = _merge_marker_block(root / name, create=create)
+        if status:
+            lines.append(status)
+    return lines
+
+
+def _ensure_gitignore(root: Path) -> str | None:
+    """Ignore .proofjury/ (session stamps, memory, proof dirs are runtime
+    state, not source). Line-based check so `.proofjury.toml` entries don't
+    mask it; only touches repos that actually use git."""
+    if not (root / ".git").exists():
+        return None
+    gitignore = root / ".gitignore"
+    if gitignore.is_file():
+        text = gitignore.read_text(encoding="utf-8")
+        entries = {line.strip() for line in text.splitlines()}
+        if entries & {".proofjury/", ".proofjury", "/.proofjury/", "/.proofjury"}:
+            return ".gitignore already covers .proofjury/"
+        if text and not text.endswith("\n"):
+            text += "\n"
+        gitignore.write_text(text + ".proofjury/\n", encoding="utf-8")
+        return "added .proofjury/ to .gitignore"
+    gitignore.write_text(".proofjury/\n", encoding="utf-8")
+    return "wrote .gitignore (.proofjury/ runtime state stays local)"
+
+
+def _path_resolution_warning() -> str | None:
+    """Warn when the hook files' bare ``proofjury hook`` command won't
+    resolve for GUI-launched agents: not on PATH at all, resolved from
+    uvx's ephemeral cache (gone after this run), or resolved inside a
+    virtualenv whose PATH GUI-launched agents don't inherit.
     """
     import shutil
 
+    fix = (
+        "install it user-wide (`uv tool install proofjury` or "
+        "`pipx install proofjury`) so the hook command resolves everywhere"
+    )
     resolved = shutil.which("proofjury")
-    in_venv = sys.prefix != sys.base_prefix
-    if resolved and ("/.venv/" in resolved or "/venv/" in resolved or in_venv):
+    if resolved is None:
         return (
-            "proofjury resolves inside a virtualenv — GUI-launched agents may "
-            "not inherit that PATH. Install it user-wide (pipx install "
-            "proofjury) or put the absolute path in the hook files."
+            "proofjury is not on PATH — the hook files reference "
+            f"`proofjury hook`, which will not resolve; {fix}."
+        )
+    norm = resolved.replace("\\", "/")
+    if "/uv/" in norm and "archive-" in norm:
+        return (
+            f"proofjury resolves from uvx's ephemeral cache ({resolved}) — "
+            f"it disappears after this run; {fix}."
+        )
+    in_venv = sys.prefix != sys.base_prefix
+    if "/.venv/" in norm or "/venv/" in norm or in_venv:
+        return (
+            "proofjury resolves inside a virtualenv — GUI-launched agents "
+            f"may not inherit that PATH; {fix}."
         )
     return None
 
@@ -816,6 +1236,11 @@ def init(
     all_agents: bool = typer.Option(
         False, "--all-agents", help="Wire hooks for all supported agents, detected or not."
     ),
+    no_agents_md: bool = typer.Option(
+        False,
+        "--no-agents-md",
+        help="Don't write the gate snippet into AGENTS.md/CLAUDE.md; print it instead.",
+    ),
 ) -> None:
     """Set up proofjury in this repo: .proofjury/, agent hooks, config."""
     root = Path.cwd()
@@ -823,6 +1248,9 @@ def init(
 
     (root / ".proofjury").mkdir(exist_ok=True)
     console.print("✓ created .proofjury/")
+    gitignore_note = _ensure_gitignore(root)
+    if gitignore_note:
+        console.print(f"✓ {gitignore_note}")
 
     agents = detect_installed_agents(root)
     console.print(
@@ -868,18 +1296,35 @@ def init(
         console.print(
             "  › Codex loads project hooks only after you trust this folder — "
             "run `codex` once and accept the prompt. Codex's streaming exec "
-            "path can bypass hooks, so the AGENTS.md snippet below is still "
-            "required for full Codex coverage."
+            "path can bypass hooks, so the AGENTS.md gate instructions are "
+            "still required for full Codex coverage."
         )
-    warning = _venv_path_warning()
-    if warning and (all_agents or "cursor" in agents or "codex" in agents):
+    warning = _path_resolution_warning()
+    if warning:
         console.print(f"  › warning: {warning}", style="yellow")
 
+    snippet_fallback = no_agents_md
+    if not no_agents_md:
+        for line in _merge_agents_snippet(root):
+            console.print(f"✓ {line}")
+            if "not clobbering" in line:
+                snippet_fallback = True
+    if snippet_fallback:
+        console.print(
+            "\nAdd this to your AGENTS.md / CLAUDE.md so every agent routes "
+            "deploys through the gate:\n"
+        )
+        console.print(AGENTS_SNIPPET)
+
+    console.print("\nNext:")
     console.print(
-        "\nAdd this to your AGENTS.md / CLAUDE.md so every agent routes deploys "
-        "through the gate:\n"
+        f"  1. proofjury run tests -- {_suggest_test_command(root)}"
+        "   # stamp a test run — the first deploy blocks without one"
     )
-    console.print(AGENTS_SNIPPET)
+    console.print(
+        "  2. deploy normally — the hook gates deploy-shaped commands automatically"
+    )
+    console.print("  3. proofjury status   # check gate readiness anytime")
 
 
 # --------------------------------------------------------------------------

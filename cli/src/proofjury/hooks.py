@@ -547,6 +547,9 @@ def build_deny_reason(result: GateResult) -> str:
             f"Memory: recalled from {result.recalled.id} — the same failure was "
             "diagnosed before in this repo.",
         ]
+    if result.impact_note:
+        # Deterministic reverse-import graph — fix with dependents in mind.
+        lines += ["", f"Blast radius: {result.impact_note}."]
     if result.agent_notes:
         # Injected advisories ride along in the deny reason — context only;
         # the block above is the deterministic checks' alone.

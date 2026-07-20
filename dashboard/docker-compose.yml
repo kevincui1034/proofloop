@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "54329:5432"
+    environment:
+      POSTGRES_DB: proofjury
+      POSTGRES_USER: proofjury
+      POSTGRES_PASSWORD: proofjury
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proofjury"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

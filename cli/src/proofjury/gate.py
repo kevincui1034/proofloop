@@ -25,8 +25,14 @@ from typing import Mapping
 
 from . import __version__, ux
 from .checks import CheckContext, CheckResult, resolve_check_profile, run_checks
-from .config import advisory_settings, cross_repo_enabled, llm_configured
+from .config import (
+    advisory_settings,
+    cross_repo_enabled,
+    impact_settings,
+    llm_configured,
+)
 from .context import capture_context, git_summary, load_config
+from .impact import build_impact, summary_line as impact_summary_line
 from .judge import DeterministicJudge, JudgeInput, JudgeOutput, get_judge
 from .judge.advisory import AdvisoryFinding, AdvisoryInput, get_advisory_judge
 from .judge.deterministic import compile_fix_steps
@@ -83,6 +89,10 @@ class GateResult:
     #: injected findings plus drained (approved/retraction) notes.
     #: Context only: never a permission decision.
     agent_notes: list[str] = field(default_factory=list)
+    #: Deterministic blast-radius one-liner (reverse-import graph) for the
+    #: deny payload. NOT an advisory — no model judgment involved — and
+    #: context only: never part of the decision.
+    impact_note: str | None = None
 
 
 def scrub_text(text: str, env: Mapping[str, str]) -> str:
@@ -414,6 +424,26 @@ def run_gate(
         action, digest, run_context.files, root, run_context.env_fingerprint
     )
 
+    # 3.2 Blast radius — deterministic reverse-import graph (Phase B).
+    #     Context only: persisted as a proof file, surfaced in the deny
+    #     payload, and fed to the advisory judge. Never touches the
+    #     decision; build_impact degrades to None instead of raising.
+    imp_settings = impact_settings(config)
+    impact = (
+        build_impact(
+            root,
+            run_context.changed_files,
+            run_context.files,
+            depth=imp_settings["depth"],
+            max_files=imp_settings["max_files"],
+        )
+        if imp_settings["enabled"]
+        else None
+    )
+    impact_note = impact_summary_line(impact)
+    if impact_note:
+        impact_note = scrub_text(impact_note, scrub_env)
+
     # 3.5 Advisory judge — model judgment, advisory ONLY. Best-effort and
     #     fully firewalled: any failure here yields zero findings and the
     #     record is byte-identical to a run without the judge. Deterministic
@@ -452,6 +482,7 @@ def run_gate(
                 results=results,
                 priors=_advisory_priors(store, run_context.repo_id, priors),
                 rejected_concerns=sorted(rejected.values()),
+                impact_summary=impact_note or "",
             )
             advisory_input_text = advisory_input.to_prompt_text()
             advisory_result = adv_engine.review(advisory_input)
@@ -561,6 +592,11 @@ def run_gate(
     (run_dir / "diff.patch").write_text(
         scrub_text(run_context.diff_excerpt, scrub_env), encoding="utf-8"
     )
+    if impact is not None:
+        (run_dir / "impact.json").write_text(
+            scrub_text(json.dumps(impact, indent=2, ensure_ascii=False), scrub_env),
+            encoding="utf-8",
+        )
 
     # 7. Build + persist the training-ready record (scrubbed)
     resolution = None
@@ -597,7 +633,8 @@ def run_gate(
             ),
             scrub_env,
         ),
-        proof_refs=["checks.json", "context.json", "diff.patch"],
+        proof_refs=["checks.json", "context.json", "diff.patch"]
+        + (["impact.json"] if impact is not None else []),
         recalled_from=recalled.id if recalled is not None else None,
         judge_model_id=judge_output.model_id,
         resolution=resolution,
@@ -674,4 +711,5 @@ def run_gate(
         exit_code=exit_code,
         recalled=recalled,
         agent_notes=agent_notes,
+        impact_note=impact_note,
     )

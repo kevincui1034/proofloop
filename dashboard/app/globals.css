@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+/* ————— Proofjury dashboard: the night world —————
+   Tokens shared with the landing page (landing/app/globals.css). The
+   dashboard lives in the courtroom-dark night world by default; the paper
+   block is kept for parity so components can be rescoped later. Color is
+   a verdict, never decoration. */
+:root,
+[data-world="night"] {
+  /* surfaces */
+  --surface: #0a0e14;
+  --surface-2: #0e141d; /* raised */
+  --surface-3: #070b11; /* inset */
+
+  /* type */
+  --ink: #edf1f7;
+  --body: #a9b4c4;
+  --faint: #7d8899;
+
+  /* structure */
+  --line: #1d2531;
+  --line-2: #2b3544;
+
+  /* the judge / brand */
+  --amber: #f5b83d;
+  --amber-ink: #f5b83d;
+  --amber-deep: #c98f1d;
+
+  /* verdicts */
+  --verdict-red: #f2716a;
+  --verdict-red-deep: #e5484d;
+  --verdict-green: #4ade80;
+
+  /* vendor-neutral agent glyphs */
+  --bot-teal: #2dd4bf;
+  --bot-violet: #a78bfa;
+  --bot-rose: #fb7185;
+}
+
+[data-world="paper"] {
+  --surface: #f2edde;
+  --surface-2: #f8f4e9;
+  --surface-3: #e9e2cd;
+
+  --ink: #1d232e;
+  --body: #3f4856;
+  --faint: #565f6e;
+
+  --line: #d9d2bc;
+  --line-2: #c2ba9f;
+
+  --amber: #f5b83d;
+  --amber-ink: #8a6210;
+  --amber-deep: #8a6210;
+
+  --verdict-red: #bf3630;
+  --verdict-red-deep: #a02b26;
+  --verdict-green: #1f7a42;
+
+  --bot-teal: #0f766e;
+  --bot-violet: #6d28d9;
+  --bot-rose: #be123c;
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-body: var(--body);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-amber: var(--amber);
+  --color-amber-ink: var(--amber-ink);
+  --color-amber-deep: var(--amber-deep);
+  --color-verdict-red: var(--verdict-red);
+  --color-verdict-red-deep: var(--verdict-red-deep);
+  --color-verdict-green: var(--verdict-green);
+  --color-bot-teal: var(--bot-teal);
+  --color-bot-violet: var(--bot-violet);
+  --color-bot-rose: var(--bot-rose);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-instrument-serif);
+}
+
+html {
+  background: var(--surface);
+}

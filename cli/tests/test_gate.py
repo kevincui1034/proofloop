@@ -452,3 +452,62 @@ def test_blocked_hint_suppressed_when_llm_configured(failing_repo, scrubbed_env)
 def test_allowed_run_never_shows_login_hint(passing_repo, scrubbed_env):
     out = _render(passing_repo.root, scrubbed_env, judge=DeterministicJudge())
     assert LOGIN_HINT not in out
+
+
+# --------------------------------------------------------------------------
+# blast radius (impact.py): proof file + deny note — context only, the
+# decision and exit code are pinned identical with impact on and off
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def blast_repo(failing_repo):
+    """failing_repo plus a dependent: checkout.py imports payments.py."""
+    failing_repo.write("checkout.py", "import payments\n")
+    return failing_repo
+
+
+def test_impact_json_written_and_in_proof_refs(blast_repo, scrubbed_env):
+    result = run_gate(blast_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
+    assert "impact.json" in result.record.proof_refs
+    run_dir = blast_repo.root / ".proofjury" / "runs" / result.record.id
+    impact = json.loads((run_dir / "impact.json").read_text())
+    entry = next(e for e in impact["changed"] if e["file"] == "payments.py")
+    assert {"file": "checkout.py", "edge": "import", "depth": 1} in entry["dependents"]
+
+
+def test_impact_note_in_deny_reason(blast_repo, scrubbed_env):
+    from proofjury.hooks import build_deny_reason
+
+    result = run_gate(blast_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
+    assert result.blocked
+    assert result.impact_note and "payments.py" in result.impact_note
+    reason = build_deny_reason(result)
+    assert "Blast radius:" in reason and "checkout.py" in reason
+
+
+def test_impact_disabled_in_config(blast_repo, scrubbed_env):
+    blast_repo.write(".proofjury.toml", "[impact]\nenabled = false\n")
+    result = run_gate(blast_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
+    assert "impact.json" not in result.record.proof_refs
+    assert result.impact_note is None
+    run_dir = blast_repo.root / ".proofjury" / "runs" / result.record.id
+    assert not (run_dir / "impact.json").exists()
+
+
+def test_exit_code_identical_with_and_without_impact(blast_repo, scrubbed_env):
+    """Impact is context only: the decision belongs to the checks alone."""
+    with_impact = run_gate(blast_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
+    blast_repo.write(".proofjury.toml", "[impact]\nenabled = false\n")
+    without = run_gate(blast_repo.root, "deploy", ["true"], env=scrubbed_env, render=False)
+    assert with_impact.impact_note and without.impact_note is None
+    assert with_impact.blocked and without.blocked
+    assert with_impact.exit_code == without.exit_code == 2
+
+
+def test_impact_skips_gracefully_without_git(tmp_path, scrubbed_env):
+    """No git → no changed files → no impact.json (the demo stays untouched)."""
+    (tmp_path / "app.py").write_text("X = 1\n")
+    result = run_gate(tmp_path, "deploy", ["true"], env=scrubbed_env, render=False)
+    assert "impact.json" not in result.record.proof_refs
+    assert result.impact_note is None

@@ -127,6 +127,88 @@ def clear_judge_config(env: Mapping[str, str] | None = None) -> str | None:
     return removed.get("provider") if isinstance(removed, dict) else None
 
 
+#: Where gate records sync when connected (see ``proofjury connect``).
+DEFAULT_SYNC_ENDPOINT = "https://app.proofjury.com/api/v1"
+
+
+def save_sync_config(
+    token: str,
+    token_id: str,
+    endpoint: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    """Write the ``[sync]`` table (0600), preserving any other tables.
+
+    ``endpoint`` is persisted only when it differs from the default — a
+    dev/test override, not something every config should carry.
+    """
+    config = load_config(env)
+    sync: dict = {"token": token, "token_id": token_id, "enabled": True}
+    if endpoint and endpoint != DEFAULT_SYNC_ENDPOINT:
+        sync["endpoint"] = endpoint
+    config["sync"] = sync
+    path = config_path(env)
+    _atomic_write(path, _render_toml(config))
+    os.chmod(path, 0o600)
+    return path
+
+
+def clear_sync_config(env: Mapping[str, str] | None = None) -> str | None:
+    """Remove the ``[sync]`` table; delete the file if that's all it held.
+
+    Returns the removed token_id (for best-effort server-side revoke).
+    """
+    path = config_path(env)
+    config = load_config(env)
+    removed = config.get("sync")
+    if removed is None:
+        return None
+    others = {k: v for k, v in config.items() if k != "sync"}
+    if others:
+        _atomic_write(path, _render_toml(others))
+        os.chmod(path, 0o600)
+    else:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    return removed.get("token_id") if isinstance(removed, dict) else None
+
+
+def resolve_sync(env: Mapping[str, str] | None = None) -> dict | None:
+    """``{"token", "token_id", "endpoint"}`` when sync is on, else None.
+
+    ``PROOFJURY_NO_SYNC`` (any non-empty value) wins over config — the
+    same belt-and-braces off switch as PROOFJURY_NO_CROSS_REPO. Endpoint
+    precedence: PROOFJURY_SYNC_URL > ``[sync].endpoint`` > default.
+    """
+    env = _env(env)
+    if env.get("PROOFJURY_NO_SYNC"):
+        return None
+    table = load_config(env).get("sync")
+    if not isinstance(table, dict):
+        return None
+    if table.get("enabled") is False:
+        return None
+    token = table.get("token")
+    if not isinstance(token, str) or not token:
+        return None
+    endpoint = (
+        env.get("PROOFJURY_SYNC_URL")
+        or table.get("endpoint")
+        or DEFAULT_SYNC_ENDPOINT
+    )
+    return {
+        "token": token,
+        "token_id": table.get("token_id", ""),
+        "endpoint": str(endpoint).rstrip("/"),
+    }
+
+
+def sync_enabled(env: Mapping[str, str] | None = None) -> bool:
+    return resolve_sync(env) is not None
+
+
 def resolve_judge(
     env: Mapping[str, str] | None = None, config: dict | None = None
 ) -> dict | None:
@@ -189,6 +271,34 @@ ADVISORY_DEFAULTS = {
     "tiers": [4, 5],                    # mute a whole tier with e.g. [4]
     "model": None,                      # None → the judge's resolved model
 }
+
+
+#: Defaults for the repo-level ``.proofjury.toml [impact]`` table. The
+#: blast-radius graph is deterministic, local, and context-only (never
+#: touches the decision), so it defaults ON.
+IMPACT_DEFAULTS = {
+    "enabled": True,
+    "depth": 2,        # reverse-import BFS depth
+    "max_files": 50,   # total dependents emitted across changed files
+}
+
+
+def impact_settings(repo_config: dict | None) -> dict:
+    """The ``[impact]`` table from ``.proofjury.toml`` merged over
+    ``IMPACT_DEFAULTS``. Malformed values fall back to the default for
+    that key — a config typo must never crash the gate.
+    """
+    settings = dict(IMPACT_DEFAULTS)
+    table = (repo_config or {}).get("impact")
+    if not isinstance(table, dict):
+        return settings
+    if isinstance(table.get("enabled"), bool):
+        settings["enabled"] = table["enabled"]
+    for key in ("depth", "max_files"):
+        value = table.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+            settings[key] = value
+    return settings
 
 
 #: Defaults for the repo-level ``.proofjury.toml [memory]`` table. Cross-repo

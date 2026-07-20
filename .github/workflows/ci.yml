@@ -7,7 +7,32 @@ on:
     branches: [main]
 
 jobs:
+  # Path filters computed once; each job gates on its own area so CLI PRs
+  # don't build the dashboard and vice versa. The shared signature fixture
+  # (cli/tests/fixtures/) triggers BOTH jobs — parity is two-sided.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cli:
+              - 'cli/**'
+              - 'scripts/**'
+              - '.github/workflows/ci.yml'
+            dashboard:
+              - 'dashboard/**'
+              - 'cli/tests/fixtures/**'
+              - '.github/workflows/ci.yml'
+
   test:
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,3 +50,46 @@ jobs:
         run: pip install -e "cli[dev]"
       - name: Test
         run: python -m pytest cli/tests -q
+
+  dashboard:
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: proofjury_test
+          POSTGRES_USER: proofjury
+          POSTGRES_PASSWORD: proofjury
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U proofjury"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://proofjury:proofjury@localhost:54329/proofjury_test
+      BLOB_DRIVER: local
+      AUTH_SECRET: ci-only-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npx vitest run
+      - name: Build
+        run: npm run build

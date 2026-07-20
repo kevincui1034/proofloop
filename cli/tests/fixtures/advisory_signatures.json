@@ -1,0 +1,52 @@
+[
+  {
+    "concern": "External call has no error handling",
+    "target": "payments.py:14",
+    "signature": "payments.py|call error external handling"
+  },
+  {
+    "concern": "External call has no error handling",
+    "target": null,
+    "signature": "|call error external handling"
+  },
+  {
+    "concern": "Missing retry logic; DATA-loss risk!",
+    "target": "src/api/Orders.PY:203",
+    "signature": "src/api/orders.py|data logic loss missing retry risk"
+  },
+  {
+    "concern": "duplicate duplicate tokens tokens",
+    "target": "a.py:1",
+    "signature": "a.py|duplicate tokens"
+  },
+  {
+    "concern": "short a b c words only",
+    "target": null,
+    "signature": "|only short words"
+  },
+  {
+    "concern": "",
+    "target": null,
+    "signature": "|"
+  },
+  {
+    "concern": "",
+    "target": "file.py:9",
+    "signature": "file.py|"
+  },
+  {
+    "concern": "Ünïcode is stripped but ascii_tokens_remain",
+    "target": "d.py:2",
+    "signature": "d.py|ascii_tokens_remain code stripped"
+  },
+  {
+    "concern": "numbers 1234 and under_scores keep",
+    "target": "e.ts:77",
+    "signature": "e.ts|1234 keep numbers under_scores"
+  },
+  {
+    "concern": "Case INSENSITIVE Tokens MATCH case insensitive tokens match",
+    "target": "F.TSX:5",
+    "signature": "f.tsx|case insensitive match tokens"
+  }
+]

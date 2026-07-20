@@ -551,3 +551,18 @@ def test_advisory_prompt_contains_the_essentials(record_factory):
     # no task → the prompt says so
     advisory_input.task_ref = None
     assert "do not emit tier-5" in advisory_input.to_prompt_text()
+
+
+def test_advisory_prompt_includes_impact_summary_only_when_present():
+    base = dict(
+        action="deploy", repo_id="demo-app", task_ref=None,
+        git_summary="the summary",
+    )
+    without = AdvisoryInput(**base)
+    assert "Blast radius" not in without.to_prompt_text()
+    with_impact = AdvisoryInput(
+        **base, impact_summary="this change touches payments.py, imported by 2 modules"
+    )
+    text = with_impact.to_prompt_text()
+    assert "Blast radius (deterministic reverse-import graph):" in text
+    assert "payments.py" in text

@@ -44,28 +44,33 @@ prior diagnosis: `↩ Recalled from chk_001`.
 
 | Path | What it is |
 |---|---|
-| [`cli/`](cli/) | The `proofjury` CLI (Python 3.11+, Apache-2.0): `guard`, `run`, `resolve`, `confirm`, `memory`, `init` |
+| [`cli/`](cli/) | The `proofjury` CLI (Python 3.11+, Apache-2.0): `guard`, `run`, `resolve`, `confirm`, `memory`, `init`, `status` |
 | [`demo-app/`](demo-app/) | An intentionally-broken agent-built app — the acceptance-test bed |
 | [`scripts/demo.sh`](scripts/demo.sh) | End-to-end demo: block → fix → allow → recurrence caught from memory |
 | [`landing/`](landing/) | proofjury.com landing page (Next.js, static export) |
+| [`dashboard/`](dashboard/) | app.proofjury.com hosted dashboard (Next.js + Supabase Postgres/Drizzle + Auth.js + Cloudflare R2): every gate run as a trace — verdict, evidence, blast radius, judge advice feed |
 
 ## Quick start
 
 ```bash
-# install (Python 3.11+)
+# install (Python 3.11+) — PyPI release imminent:
+uv tool install proofjury            # or: pipx install proofjury
+# until then, straight from GitHub:
 pip install "git+https://github.com/kevincui1034/proofjury.git#subdirectory=cli"
 
 cd your-project
-proofjury init                       # writes agent hooks; prints AGENTS.md snippet
+proofjury init                       # wires agent hooks + AGENTS.md gate instructions
+proofjury run tests -- pytest        # stamp a test run (first deploy blocks without one)
 proofjury guard deploy -- vercel --prod
 ```
 
-`pipx install "git+https://github.com/kevincui1034/proofjury.git#subdirectory=cli"` works too (isolated). Or clone and `pip install -e cli` for local development.
+Install user-wide (`uv tool install` / `pipx`) rather than into a project venv: GUI-launched agents don't inherit a shell-activated venv PATH, and the hook command has to resolve for them. `proofjury status` shows gate readiness — setup, hooks, PATH, run stamps — anytime. For local development, clone and `pip install -e cli`.
+
+Optionally, `proofjury connect` links a machine to your hosted dashboard (device-code flow, token at `~/.config/proofjury/config.toml`, mode `0600`): after that every gate run best-effort syncs its already-scrubbed record — sync never blocks, slows, or fails the gate, and `PROOFJURY_NO_SYNC=1` or `proofjury disconnect` turns it off. Analysis stays local; the cloud only stores and visualizes.
 
 Runs fully offline with no key. For LLM-written explanations, `proofjury login` picks a provider — OpenRouter, Anthropic, or OpenAI — and stores the key at `~/.config/proofjury/config.toml` (mode `0600`, outside the repo). Env vars still work and take precedence: `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, plus `PROOFJURY_JUDGE_PROVIDER` and `PROOFJURY_JUDGE_MODEL`. Defaults are cheap per provider (OpenRouter `openai/gpt-4o-mini`, Anthropic `claude-haiku-4-5`, OpenAI `gpt-4o-mini`). The LLM only writes the explanation — deterministic checks still decide pass/fail.
 
 ## Docs
 
-- [`proofjury-claude-code-handoff-final.md`](proofjury-claude-code-handoff-final.md) — MVP build brief
 - [`proofjury-full-scope.md`](proofjury-full-scope.md) — full venture scope
 - [`cli/TAXONOMY.md`](cli/TAXONOMY.md) — the deploy-time correctness failure taxonomy (open spec)
